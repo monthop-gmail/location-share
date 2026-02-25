@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="description" content="แชร์ตำแหน่งแบบเรียลไทม์สำหรับกลุ่ม LINE" />
+  <title>แชร์ตำแหน่งเพื่อน</title>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Thai Sans', system-ui; background: #f8f9fa; }
+    #map { height: 70vh; width: 100%; }
+    .controls { padding: 16px; text-align: center; }
+    button {
+      background: #00BFA5;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 8px;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="controls">
+    <button id="shareBtn">📍 แชร์ตำแหน่งของฉัน</button>
+    <button id="viewBtn">👁️ ดูตำแหน่งเพื่อน</button>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([13.7563, 100.5018], 12);
+    L.tileLayer('https://{a-d}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    document.getElementById('shareBtn').addEventListener('click', () => {
+      alert('ฟีเจอร์นี้จะเชื่อมกับ Supabase เพื่อส่งตำแหน่งแบบเรียลไทม์');
+    });
+
+    document.getElementById('viewBtn').addEventListener('click', () => {
+      alert('ฟีเจอร์นี้จะดึงตำแหน่งเพื่อนจาก Supabase และแสดงบนแผนที่');
+    });
+  </script>
+</body>
+</html>
