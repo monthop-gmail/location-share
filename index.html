@@ -303,7 +303,7 @@
 
       // Subscribe to realtime changes
       console.log('Subscribing to realtime...');
-      supabaseClient
+      const channel = supabaseClient
         .channel('public:locations')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
           console.log('Realtime change received!', payload);
@@ -315,9 +315,20 @@
         .subscribe((status) => {
           console.log('Subscription status:', status);
           if (status === 'SUBSCRIBED') {
-             alert('กำลังติดตามตำแหน่งเพื่อนๆ...');
+             // alert('กำลังติดตามตำแหน่งเพื่อนๆ...'); // Don't alert to avoid annoyance
+             console.log('Realtime subscribed');
           }
         });
+        
+      // Auto-refresh every 10 seconds as a fallback
+      setInterval(() => {
+        console.log('Auto-refreshing locations...');
+        supabaseClient.from('locations').select('*').then(({ data, error }) => {
+          if (!error && data) {
+            data.forEach(updateMarker);
+          }
+        });
+      }, 10000);
     }
 
     let friendData = []; // Store friend data for list
