@@ -49,31 +49,12 @@
 
     .btn-group {
       display: grid;
+      grid-template-columns: 1fr 1fr; /* Make buttons side-by-side */
       gap: 12px;
     }
-
-    button {
-      background: #00BFA5;
-      color: white;
-      border: none;
-      padding: 14px;
-      border-radius: 12px;
-      font-size: 16px;
-      font-weight: 500;
-      font-family: 'Kanit', sans-serif;
-      cursor: pointer;
-      transition: transform 0.1s ease, box-shadow 0.2s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    }
-
-    button:active {
-      transform: scale(0.98);
-    }
-
+    
     button#shareBtn {
+      grid-column: span 2; /* Share button full width */
       background: linear-gradient(135deg, #00BFA5 0%, #009688 100%);
       box-shadow: 0 4px 12px rgba(0, 191, 165, 0.3);
     }
@@ -158,6 +139,10 @@
       <button id="viewBtn" onclick="fitAllMarkers()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
         ค้นหาเพื่อน (Fit Zoom)
+      </button>
+      <button id="stopBtn" style="background: #e57373;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+        เลิกแชร์
       </button>
     </div>
     
@@ -435,7 +420,29 @@
       }
     }
 
+    async function stopSharing() {
+      if (!confirm('ยืนยันที่จะเลิกแชร์ตำแหน่ง? เพื่อนจะไม่เห็นคุณบนแผนที่อีก')) return;
+
+      console.log('Stopping share for:', userId);
+      const { error } = await supabaseClient
+        .from('locations')
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Stop share error:', error);
+        alert('เกิดข้อผิดพลาด: ' + error.message);
+      } else {
+        if (myMarker) {
+          myMarker.remove();
+          myMarker = null;
+        }
+        alert('เลิกแชร์ตำแหน่งเรียบร้อยแล้ว');
+      }
+    }
+
     document.getElementById('shareBtn').addEventListener('click', shareLocation);
+    document.getElementById('stopBtn').addEventListener('click', stopSharing);
     // document.getElementById('viewBtn').addEventListener('click', subscribeToLocations); // No need as it's auto-subscribed, now used for Fit Zoom
   </script>
 </body>
