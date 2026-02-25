@@ -294,9 +294,24 @@
           console.log('Realtime change received!', payload);
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             updateMarker(payload.new);
-          }
-          if (payload.eventType === 'DELETE') {
-             removeMarker(payload.old.id);
+          } else if (payload.eventType === 'DELETE') {
+             // For simplicity and reliability, reload all markers on DELETE
+             // This ensures we sync correctly without needing full replica identity
+             console.log('DELETE event received, refreshing all markers...');
+             // Clear existing markers first (except self)
+             Object.keys(otherMarkers).forEach(key => {
+               otherMarkers[key].remove();
+               delete otherMarkers[key];
+             });
+             friendData = []; // Clear list data
+             updateFriendList(); // Clear UI list
+             
+             // Fetch fresh data
+             supabaseClient.from('locations').select('*').then(({ data, error }) => {
+               if (!error && data) {
+                 data.forEach(updateMarker);
+               }
+             });
           }
         })
         .subscribe((status) => {
