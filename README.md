@@ -13,6 +13,11 @@ cd location-share
 # แก้ไขไฟล์ แล้ว commit & push
 ```
 
+## Features
+- **Realtime Location Sharing:** แชร์ตำแหน่งและดูตำแหน่งเพื่อนแบบ Realtime
+- **Display Name:** ใส่ชื่อเล่นของตัวเองได้
+- **Supabase Integration:** เก็บข้อมูลพิกัดลง Database ที่ปลอดภัยและรวดเร็ว
+
 ## CI/CD
 - Auto-deploy ทันทีเมื่อ push ไปยัง `main` branch
 - ดูสถานะ build: [GitHub Actions](https://github.com/monthop-gmail/location-share/actions)
