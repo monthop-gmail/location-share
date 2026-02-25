@@ -52,39 +52,57 @@
       flex-direction: column;
       gap: 12px;
     }
-    
-    button#shareBtn {
+
+    button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       width: 100%;
+      border: none;
+      border-radius: 14px;
+      font-family: 'Kanit', sans-serif;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    button#shareBtn {
       background: linear-gradient(135deg, #00BFA5 0%, #009688 100%);
-      box-shadow: 0 4px 12px rgba(0, 191, 165, 0.3);
+      box-shadow: 0 4px 15px rgba(0, 191, 165, 0.35);
+      color: white;
       padding: 16px;
       font-size: 18px;
     }
 
-    button#shareBtn.sharing {
-      background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);
-      box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
-    }
-    
-    button#fitBtn {
-      background: white;
-      color: #555;
-      border: 1px solid #ddd;
-      padding: 12px;
-      font-size: 14px;
-      justify-content: center;
-    }
-    
-    button#shareBtn {
-      grid-column: span 2; /* Share button full width */
-      background: linear-gradient(135deg, #00BFA5 0%, #009688 100%);
-      box-shadow: 0 4px 12px rgba(0, 191, 165, 0.3);
+    button#shareBtn:active {
+      box-shadow: 0 2px 8px rgba(0, 191, 165, 0.3);
     }
 
-    button#viewBtn {
-      background: white;
-      color: #333;
-      border: 1px solid #eee;
+    button#shareBtn.sharing {
+      background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);
+      box-shadow: 0 4px 15px rgba(244, 67, 54, 0.35);
+    }
+
+    button#shareBtn.sharing:active {
+      box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
+    }
+
+    button#fitBtn {
+      background: #f8f9fa;
+      color: #555;
+      border: 1px solid #e0e0e0;
+      padding: 13px;
+      font-size: 15px;
+    }
+
+    button#fitBtn:active {
+      background: #eee;
     }
 
     /* Custom Popup Style */
@@ -540,30 +558,7 @@
       }
     }
 
-    async function stopSharing() {
-      if (!confirm('ยืนยันที่จะเลิกแชร์ตำแหน่ง? เพื่อนจะไม่เห็นคุณบนแผนที่อีก')) return;
-
-      console.log('Stopping share for:', userId);
-      const { error } = await supabaseClient
-        .from('locations')
-        .delete()
-        .eq('user_id', userId);
-
-      if (error) {
-        console.error('Stop share error:', error);
-        alert('เกิดข้อผิดพลาด: ' + error.message);
-      } else {
-        if (myMarker) {
-          myMarker.remove();
-          myMarker = null;
-        }
-        alert('เลิกแชร์ตำแหน่งเรียบร้อยแล้ว');
-      }
-    }
-
-    document.getElementById('shareBtn').addEventListener('click', shareLocation);
-    document.getElementById('stopBtn').addEventListener('click', stopSharing);
-    // document.getElementById('viewBtn').addEventListener('click', subscribeToLocations); // No need as it's auto-subscribed, now used for Fit Zoom
+    // Event listeners handled via onclick in HTML (toggleShare, fitAllMarkers)
   </script>
 </body>
 </html>
