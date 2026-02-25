@@ -34,17 +34,117 @@
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
   <script>
+    // Configuration - Replace with your own Supabase project details
+    const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+    
+    // Initialize Supabase
+    let supabaseClient;
+    try {
+      if (SUPABASE_URL === 'YOUR_SUPABASE_URL') {
+        console.warn('Please update SUPABASE_URL and SUPABASE_ANON_KEY in index.html');
+      } else {
+        // Access the global supabase object from the CDN
+        supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      }
+    } catch (e) {
+      console.error('Supabase init error:', e);
+    }
+
     const map = L.map('map').setView([13.7563, 100.5018], 12);
     L.tileLayer('https://{a-d}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-    document.getElementById('shareBtn').addEventListener('click', () => {
-      alert('ฟีเจอร์นี้จะเชื่อมกับ Supabase เพื่อส่งตำแหน่งแบบเรียลไทม์');
-    });
+    let myMarker = null;
+    let otherMarkers = {};
+    let userId = localStorage.getItem('user_id');
+    
+    if (!userId) {
+      userId = 'user_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('user_id', userId);
+    }
 
-    document.getElementById('viewBtn').addEventListener('click', () => {
-      alert('ฟีเจอร์นี้จะดึงตำแหน่งเพื่อนจาก Supabase และแสดงบนแผนที่');
-    });
+    async function shareLocation() {
+      if (!supabaseClient) return alert('กรุณาตั้งค่า Supabase URL/Key ในไฟล์ index.html ก่อน');
+      
+      if (!navigator.geolocation) return alert('เบราว์เซอร์ไม่รองรับ Geolocation');
+
+      navigator.geolocation.getCurrentPosition(async (position) => {
+        const { latitude, longitude } = position.coords;
+        
+        // Update map view
+        map.setView([latitude, longitude], 15);
+        if (myMarker) myMarker.remove();
+        myMarker = L.marker([latitude, longitude]).addTo(map)
+          .bindPopup('ฉันอยู่ที่นี่').openPopup();
+
+        // Send to Supabase
+        const { error } = await supabaseClient
+          .from('locations')
+          .upsert({ 
+            user_id: userId, 
+            lat: latitude, 
+            lng: longitude,
+            updated_at: new Date()
+          }, { onConflict: 'user_id' });
+
+        if (error) {
+          console.error('Error sharing location:', error);
+          alert('เกิดข้อผิดพลาดในการแชร์ตำแหน่ง: ' + error.message);
+        } else {
+          alert('แชร์ตำแหน่งเรียบร้อย! (หมดอายุใน 15 นาที)');
+        }
+      }, (err) => {
+        alert('ไม่สามารถดึงตำแหน่งได้: ' + err.message);
+      });
+    }
+
+    function subscribeToLocations() {
+      if (!supabaseClient) return alert('กรุณาตั้งค่า Supabase URL/Key ในไฟล์ index.html ก่อน');
+
+      // Fetch existing locations
+      supabaseClient.from('locations').select('*').then(({ data, error }) => {
+        if (!error && data) {
+          data.forEach(updateMarker);
+        }
+      });
+
+      // Subscribe to realtime changes
+      supabaseClient
+        .channel('public:locations')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
+          console.log('Change received!', payload);
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            updateMarker(payload.new);
+          }
+          // Handle DELETE/Expire logic if needed
+        })
+        .subscribe();
+        
+      alert('กำลังติดตามตำแหน่งเพื่อนๆ...');
+    }
+
+    function updateMarker(loc) {
+      if (loc.user_id === userId) return; // Don't show myself as "other"
+
+      // Check if expired (client-side check for immediate feedback)
+      const expiresAt = new Date(loc.updated_at).getTime() + 15 * 60 * 1000;
+      if (Date.now() > expiresAt) return; 
+
+      if (otherMarkers[loc.user_id]) {
+        otherMarkers[loc.user_id].setLatLng([loc.lat, loc.lng]);
+      } else {
+        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng])
+          .addTo(map)
+          .bindPopup(`User: ${loc.user_id.substring(0, 5)}...`);
+      }
+    }
+
+    document.getElementById('shareBtn').addEventListener('click', shareLocation);
+    document.getElementById('viewBtn').addEventListener('click', subscribeToLocations);
   </script>
 </body>
 </html>
