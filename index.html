@@ -48,9 +48,31 @@
     }
 
     .btn-group {
-      display: grid;
-      grid-template-columns: 1fr 1fr; /* Make buttons side-by-side */
+      display: flex;
+      flex-direction: column;
       gap: 12px;
+    }
+    
+    button#shareBtn {
+      width: 100%;
+      background: linear-gradient(135deg, #00BFA5 0%, #009688 100%);
+      box-shadow: 0 4px 12px rgba(0, 191, 165, 0.3);
+      padding: 16px;
+      font-size: 18px;
+    }
+
+    button#shareBtn.sharing {
+      background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);
+      box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+    }
+    
+    button#fitBtn {
+      background: white;
+      color: #555;
+      border: 1px solid #ddd;
+      padding: 12px;
+      font-size: 14px;
+      justify-content: center;
     }
     
     button#shareBtn {
@@ -132,17 +154,13 @@
       <input type="text" id="displayName" placeholder="ใส่ชื่อเล่นของคุณที่นี่...">
     </div>
     <div class="btn-group">
-      <button id="shareBtn">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-        แชร์ตำแหน่งของฉัน
+      <button id="shareBtn" onclick="toggleShare()">
+        <svg id="shareIcon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span id="shareText">เริ่มแชร์ตำแหน่ง</span>
       </button>
-      <button id="viewBtn" onclick="fitAllMarkers()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        ค้นหาเพื่อน (Fit Zoom)
-      </button>
-      <button id="stopBtn" style="background: #e57373;">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
-        เลิกแชร์
+      <button id="fitBtn" onclick="fitAllMarkers()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+        ดูเพื่อนทุกคน (Fit Zoom)
       </button>
     </div>
     
@@ -212,8 +230,34 @@
     // Auto-subscribe on load
     subscribeToLocations();
 
-    async function shareLocation() {
-      console.log('Share button clicked');
+    let isSharing = false;
+    let watchId = null;
+
+    function toggleShare() {
+       if (isSharing) {
+         stopSharing();
+       } else {
+         startSharing();
+       }
+    }
+
+    function updateShareButtonUI() {
+       const btn = document.getElementById('shareBtn');
+       const text = document.getElementById('shareText');
+       if (isSharing) {
+         btn.classList.add('sharing');
+         text.innerText = 'หยุดแชร์ตำแหน่ง';
+         // Change icon to stop icon
+         btn.querySelector('svg').innerHTML = '<circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line>';
+       } else {
+         btn.classList.remove('sharing');
+         text.innerText = 'เริ่มแชร์ตำแหน่ง';
+         // Change icon back to map pin
+         btn.querySelector('svg').innerHTML = '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>';
+       }
+    }
+
+    async function startSharing() {
       if (!supabaseClient) return alert('Supabase client not initialized');
       
       const displayName = document.getElementById('displayName').value.trim();
@@ -221,21 +265,33 @@
       localStorage.setItem('display_name', displayName);
 
       if (!navigator.geolocation) return alert('เบราว์เซอร์ไม่รองรับ Geolocation');
+      
+      isSharing = true;
+      updateShareButtonUI();
 
-      console.log('Requesting geolocation...');
-      navigator.geolocation.getCurrentPosition(async (position) => {
-        console.log('Geolocation success:', position);
+      // Start watching
+      watchId = navigator.geolocation.watchPosition(
+           (pos) => updateLocationFromWatch(pos), 
+           (err) => console.error(err),
+           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+
+    async function updateLocation(position, displayName) {
         const { latitude, longitude } = position.coords;
         
-        // Update map view
-        map.setView([latitude, longitude], 15);
+        // Update map view only on first start or significant move? 
+        // Or just update marker. Let's just update marker to not annoy user panning.
+        if (!myMarker) {
+           map.setView([latitude, longitude], 15);
+        }
+        
         if (myMarker) myMarker.remove();
         myMarker = L.marker([latitude, longitude]).addTo(map)
-          .bindPopup(`<b>${displayName}</b><br>ฉันอยู่ที่นี่`).openPopup();
+          .bindPopup(`<b>${displayName}</b> (คุณ)<br>กำลังแชร์...`).openPopup();
 
         // Send to Supabase
-        console.log('Sending to Supabase...', { user_id: userId, lat: latitude, lng: longitude, display_name: displayName });
-        const { data, error } = await supabaseClient
+        const { error } = await supabaseClient
           .from('locations')
           .upsert({ 
             user_id: userId, 
@@ -243,25 +299,48 @@
             lng: longitude,
             updated_at: new Date(),
             display_name: displayName
-          }, { onConflict: 'user_id' })
-          .select();
-
-        if (error) {
-          console.error('Supabase error:', error);
-          alert('เกิดข้อผิดพลาดในการแชร์ตำแหน่ง: ' + error.message + ' (Code: ' + error.code + ')');
-        } else {
-          console.log('Supabase success:', data);
-          alert(`แชร์ตำแหน่งเรียบร้อยในชื่อ "${displayName}"! (หมดอายุใน 15 นาที)`);
-        }
-      }, (err) => {
-        console.error('Geolocation error:', err);
-        alert('ไม่สามารถดึงตำแหน่งได้: ' + err.message + ' (Code: ' + err.code + ')');
-      }, {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      });
+          }, { onConflict: 'user_id' });
+          
+        if (error) console.error('Upsert error:', error);
     }
+    
+    // Auto-update function for watchPosition
+    function updateLocationFromWatch(position) {
+       const displayName = document.getElementById('displayName').value;
+       updateLocation(position, displayName);
+    }
+
+    async function stopSharing() {
+      if (!confirm('ต้องการหยุดแชร์ตำแหน่งใช่ไหม?')) return;
+
+      if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      
+      isSharing = false;
+      updateShareButtonUI();
+
+      console.log('Stopping share for:', userId);
+      const { error } = await supabaseClient
+        .from('locations')
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Stop share error:', error);
+      } else {
+        if (myMarker) {
+          myMarker.remove();
+          myMarker = null;
+        }
+        // alert('เลิกแชร์ตำแหน่งเรียบร้อยแล้ว'); // No need to alert, UI change is enough
+      }
+    }
+
+    // Remove old listeners as we use onclick in HTML now for cleaner toggle logic
+    // document.getElementById('shareBtn').addEventListener('click', shareLocation); 
+    // document.getElementById('stopBtn').addEventListener('click', stopSharing);
 
     function subscribeToLocations() {
       console.log('View button clicked');
