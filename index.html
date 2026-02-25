@@ -28,6 +28,16 @@
 <body>
   <div id="map"></div>
   <div class="controls">
+    <input type="text" id="displayName" placeholder="ใส่ชื่อของคุณที่นี่..." style="
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      width: 80%;
+      margin-bottom: 10px;
+      font-size: 16px;
+      text-align: center;
+    ">
+    <br>
     <button id="shareBtn">📍 แชร์ตำแหน่งของฉัน</button>
     <button id="viewBtn">👁️ ดูตำแหน่งเพื่อน</button>
   </div>
@@ -66,6 +76,12 @@
     let otherMarkers = {};
     let userId = localStorage.getItem('user_id');
     
+    // Load saved name
+    const savedName = localStorage.getItem('display_name');
+    if (savedName) {
+      document.getElementById('displayName').value = savedName;
+    }
+    
     if (!userId) {
       userId = 'user_' + Math.random().toString(36).substr(2, 9);
       localStorage.setItem('user_id', userId);
@@ -78,6 +94,10 @@
       console.log('Share button clicked');
       if (!supabaseClient) return alert('Supabase client not initialized');
       
+      const displayName = document.getElementById('displayName').value.trim();
+      if (!displayName) return alert('กรุณาใส่ชื่อของคุณก่อนแชร์ตำแหน่ง');
+      localStorage.setItem('display_name', displayName);
+
       if (!navigator.geolocation) return alert('เบราว์เซอร์ไม่รองรับ Geolocation');
 
       console.log('Requesting geolocation...');
@@ -89,17 +109,18 @@
         map.setView([latitude, longitude], 15);
         if (myMarker) myMarker.remove();
         myMarker = L.marker([latitude, longitude]).addTo(map)
-          .bindPopup('ฉันอยู่ที่นี่').openPopup();
+          .bindPopup(`<b>${displayName}</b><br>ฉันอยู่ที่นี่`).openPopup();
 
         // Send to Supabase
-        console.log('Sending to Supabase...', { user_id: userId, lat: latitude, lng: longitude });
+        console.log('Sending to Supabase...', { user_id: userId, lat: latitude, lng: longitude, display_name: displayName });
         const { data, error } = await supabaseClient
           .from('locations')
           .upsert({ 
             user_id: userId, 
             lat: latitude, 
             lng: longitude,
-            updated_at: new Date()
+            updated_at: new Date(),
+            display_name: displayName
           }, { onConflict: 'user_id' })
           .select();
 
@@ -108,7 +129,7 @@
           alert('เกิดข้อผิดพลาดในการแชร์ตำแหน่ง: ' + error.message + ' (Code: ' + error.code + ')');
         } else {
           console.log('Supabase success:', data);
-          alert('แชร์ตำแหน่งเรียบร้อย! (หมดอายุใน 15 นาที)');
+          alert(`แชร์ตำแหน่งเรียบร้อยในชื่อ "${displayName}"! (หมดอายุใน 15 นาที)`);
         }
       }, (err) => {
         console.error('Geolocation error:', err);
@@ -170,12 +191,15 @@
       const expiresAt = new Date(loc.updated_at).getTime() + 15 * 60 * 1000;
       if (Date.now() > expiresAt) return; 
 
+      const displayName = loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`;
+
       if (otherMarkers[loc.user_id]) {
-        otherMarkers[loc.user_id].setLatLng([loc.lat, loc.lng]);
+        otherMarkers[loc.user_id].setLatLng([loc.lat, loc.lng])
+          .setPopupContent(`<b>${displayName}</b><br>อัปเดตเมื่อ: ${new Date(loc.updated_at).toLocaleTimeString('th-TH')}`);
       } else {
         otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng])
           .addTo(map)
-          .bindPopup(`User: ${loc.user_id.substring(0, 5)}...`);
+          .bindPopup(`<b>${displayName}</b><br>อัปเดตเมื่อ: ${new Date(loc.updated_at).toLocaleTimeString('th-TH')}`);
       }
     }
 
