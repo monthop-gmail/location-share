@@ -76,6 +76,15 @@
     let otherMarkers = {};
     let userId = localStorage.getItem('user_id');
     
+    // Auto-fit bounds on load
+    function fitAllMarkers() {
+      const group = new L.featureGroup(Object.values(otherMarkers));
+      if (myMarker) group.addLayer(myMarker);
+      if (group.getLayers().length > 0) {
+        map.fitBounds(group.getBounds().pad(0.1));
+      }
+    }
+
     // Load saved name
     const savedName = localStorage.getItem('display_name');
     if (savedName) {
@@ -89,6 +98,9 @@
     } else {
       console.log('Using existing user ID:', userId);
     }
+
+    // Auto-subscribe on load
+    subscribeToLocations();
 
     async function shareLocation() {
       console.log('Share button clicked');
@@ -155,12 +167,11 @@
           console.log('Fetched locations:', data);
           if (data && data.length > 0) {
              data.forEach(updateMarker);
-             // Fit bounds to show all markers
-             const group = new L.featureGroup(Object.values(otherMarkers));
-             if (myMarker) group.addLayer(myMarker);
-             if (group.getLayers().length > 0) map.fitBounds(group.getBounds().pad(0.1));
+             // Fit bounds after initial load if there are markers
+             if (data.length > 0) fitAllMarkers();
           } else {
-             alert('ยังไม่มีใครแชร์ตำแหน่งตอนนี้');
+             // If no markers, don't alert yet, just wait for updates or user action
+             // alert('ยังไม่มีใครแชร์ตำแหน่งตอนนี้');
           }
         }
       });
