@@ -295,7 +295,9 @@
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             updateMarker(payload.new);
           }
-          // Handle DELETE/Expire logic if needed
+          if (payload.eventType === 'DELETE') {
+             removeMarker(payload.old.id);
+          }
         })
         .subscribe((status) => {
           console.log('Subscription status:', status);
@@ -378,6 +380,30 @@
         
         listContainer.appendChild(item);
       });
+    }
+
+    function removeMarker(locationId) {
+      console.log('Removing marker with ID:', locationId);
+      // We need to find user_id from locationId, or we need location to include user_id on delete
+      // Supabase default DELETE payload only includes ID.
+      // We can iterate friendData to find the matching ID.
+      const friendIndex = friendData.findIndex(f => f.id === locationId);
+      if (friendIndex >= 0) {
+        const userIdToRemove = friendData[friendIndex].user_id;
+        
+        // Remove from Map
+        if (otherMarkers[userIdToRemove]) {
+          otherMarkers[userIdToRemove].remove();
+          delete otherMarkers[userIdToRemove];
+        }
+        
+        // Remove from List
+        friendData.splice(friendIndex, 1);
+        updateFriendList();
+      } else {
+        // Fallback: Refresh all data if ID not found (safe)
+        subscribeToLocations();
+      }
     }
 
     function updateMarker(loc) {
