@@ -50,9 +50,11 @@
       } else {
         // Access the global supabase object from the CDN
         supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        console.log('Supabase initialized successfully');
       }
     } catch (e) {
       console.error('Supabase init error:', e);
+      alert('Supabase init error: ' + e.message);
     }
 
     const map = L.map('map').setView([13.7563, 100.5018], 12);
@@ -65,14 +67,20 @@
     if (!userId) {
       userId = 'user_' + Math.random().toString(36).substr(2, 9);
       localStorage.setItem('user_id', userId);
+      console.log('Generated new user ID:', userId);
+    } else {
+      console.log('Using existing user ID:', userId);
     }
 
     async function shareLocation() {
-      if (!supabaseClient) return alert('กรุณาตั้งค่า Supabase URL/Key ในไฟล์ index.html ก่อน');
+      console.log('Share button clicked');
+      if (!supabaseClient) return alert('Supabase client not initialized');
       
       if (!navigator.geolocation) return alert('เบราว์เซอร์ไม่รองรับ Geolocation');
 
+      console.log('Requesting geolocation...');
       navigator.geolocation.getCurrentPosition(async (position) => {
+        console.log('Geolocation success:', position);
         const { latitude, longitude } = position.coords;
         
         // Update map view
@@ -82,49 +90,75 @@
           .bindPopup('ฉันอยู่ที่นี่').openPopup();
 
         // Send to Supabase
-        const { error } = await supabaseClient
+        console.log('Sending to Supabase...', { user_id: userId, lat: latitude, lng: longitude });
+        const { data, error } = await supabaseClient
           .from('locations')
           .upsert({ 
             user_id: userId, 
             lat: latitude, 
             lng: longitude,
             updated_at: new Date()
-          }, { onConflict: 'user_id' });
+          }, { onConflict: 'user_id' })
+          .select();
 
         if (error) {
-          console.error('Error sharing location:', error);
-          alert('เกิดข้อผิดพลาดในการแชร์ตำแหน่ง: ' + error.message);
+          console.error('Supabase error:', error);
+          alert('เกิดข้อผิดพลาดในการแชร์ตำแหน่ง: ' + error.message + ' (Code: ' + error.code + ')');
         } else {
+          console.log('Supabase success:', data);
           alert('แชร์ตำแหน่งเรียบร้อย! (หมดอายุใน 15 นาที)');
         }
       }, (err) => {
-        alert('ไม่สามารถดึงตำแหน่งได้: ' + err.message);
+        console.error('Geolocation error:', err);
+        alert('ไม่สามารถดึงตำแหน่งได้: ' + err.message + ' (Code: ' + err.code + ')');
+      }, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
       });
     }
 
     function subscribeToLocations() {
-      if (!supabaseClient) return alert('กรุณาตั้งค่า Supabase URL/Key ในไฟล์ index.html ก่อน');
+      console.log('View button clicked');
+      if (!supabaseClient) return alert('Supabase client not initialized');
 
       // Fetch existing locations
+      console.log('Fetching existing locations...');
       supabaseClient.from('locations').select('*').then(({ data, error }) => {
-        if (!error && data) {
-          data.forEach(updateMarker);
+        if (error) {
+          console.error('Fetch error:', error);
+          alert('Error fetching locations: ' + error.message);
+        } else {
+          console.log('Fetched locations:', data);
+          if (data && data.length > 0) {
+             data.forEach(updateMarker);
+             // Fit bounds to show all markers
+             const group = new L.featureGroup(Object.values(otherMarkers));
+             if (myMarker) group.addLayer(myMarker);
+             if (group.getLayers().length > 0) map.fitBounds(group.getBounds().pad(0.1));
+          } else {
+             alert('ยังไม่มีใครแชร์ตำแหน่งตอนนี้');
+          }
         }
       });
 
       // Subscribe to realtime changes
+      console.log('Subscribing to realtime...');
       supabaseClient
         .channel('public:locations')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
-          console.log('Change received!', payload);
+          console.log('Realtime change received!', payload);
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             updateMarker(payload.new);
           }
           // Handle DELETE/Expire logic if needed
         })
-        .subscribe();
-        
-      alert('กำลังติดตามตำแหน่งเพื่อนๆ...');
+        .subscribe((status) => {
+          console.log('Subscription status:', status);
+          if (status === 'SUBSCRIBED') {
+             alert('กำลังติดตามตำแหน่งเพื่อนๆ...');
+          }
+        });
     }
 
     function updateMarker(loc) {
