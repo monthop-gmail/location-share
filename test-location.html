@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><title>📍 Test GPS</title></head>
+<body>
+  <h2>Test Geolocation API</h2>
+  <button id="btn">ลองดึงตำแหน่ง</button>
+  <div id="result"></div>
+  <script>
+    document.getElementById('btn').onclick = () => {
+      if (!navigator.geolocation) {
+        document.getElementById('result').innerText = '❌ ไม่รองรับ GPS';
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const { latitude, longitude } = pos.coords;
+          document.getElementById('result').innerHTML = 
+            `✅ ได้ตำแหน่งแล้ว:<br>Lat: ${latitude.toFixed(6)}<br>Lng: ${longitude.toFixed(6)}`;
+        },
+        err => {
+          document.getElementById('result').innerText = `❌ เกิดข้อผิดพลาด: ${err.message}`;
+        }
+      );
+    };
+  </script>
+</body>
+</html>
