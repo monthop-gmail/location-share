@@ -244,9 +244,10 @@
       alert('Supabase init error: ' + e.message);
     }
 
-    // --- Group/Room from URL hash ---
+    // --- Group/Room from URL hash (supports Thai) ---
     function getRoom() {
-      const hash = window.location.hash.replace('#', '').trim();
+      let hash = window.location.hash.replace('#', '').trim();
+      try { hash = decodeURIComponent(hash); } catch(e) {}
       return hash || 'main';
     }
     function getRoomUserId(baseId) {
@@ -254,12 +255,13 @@
       return room === 'main' ? baseId : `${baseId}@${room}`;
     }
 
-    // Show group badge
+    // Show group badge + update title
     const currentRoom = getRoom();
     if (currentRoom !== 'main') {
       const badge = document.getElementById('groupBadge');
-      badge.textContent = `#${currentRoom}`;
+      badge.textContent = `📍 ${currentRoom}`;
       badge.style.display = 'inline-block';
+      document.title = `${currentRoom} — แชร์ตำแหน่งเพื่อน`;
     }
 
     const map = L.map('map').setView([13.7563, 100.5018], 12);
