@@ -280,7 +280,6 @@
       }
     }
     updateRoomTitle();
-    window.addEventListener('hashchange', updateRoomTitle);
 
     const map = L.map('map').setView([13.7563, 100.5018], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -447,75 +446,70 @@
     // document.getElementById('shareBtn').addEventListener('click', shareLocation); 
     // document.getElementById('stopBtn').addEventListener('click', stopSharing);
 
-    function subscribeToLocations() {
-      console.log('View button clicked');
-      if (!supabaseClient) return alert('Supabase client not initialized');
+    // Clear all other markers and friend list
+    function clearOtherMarkers() {
+      Object.keys(otherMarkers).forEach(key => {
+        otherMarkers[key].remove();
+        delete otherMarkers[key];
+      });
+      friendData = [];
+      updateFriendList();
+    }
 
-      // Fetch existing locations
-      console.log('Fetching existing locations...');
+    // Fetch and display locations (reusable)
+    function fetchLocations(fit) {
       supabaseClient.from('locations').select('*').then(({ data, error }) => {
         if (error) {
           console.error('Fetch error:', error);
-          alert('Error fetching locations: ' + error.message);
-        } else {
-          console.log('Fetched locations:', data);
-          if (data && data.length > 0) {
-             data.forEach(updateMarker);
-             // Fit bounds after initial load if there are markers
-             if (data.length > 0) fitAllMarkers();
-          } else {
-             // If no markers, don't alert yet, just wait for updates or user action
-             // alert('ยังไม่มีใครแชร์ตำแหน่งตอนนี้');
-          }
+        } else if (data && data.length > 0) {
+          data.forEach(updateMarker);
+          if (fit) fitAllMarkers();
         }
       });
-
-      // Subscribe to realtime changes
-      console.log('Subscribing to realtime...');
-      const channel = supabaseClient
-        .channel('public:locations')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
-          console.log('Realtime change received!', payload);
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-            updateMarker(payload.new);
-          } else if (payload.eventType === 'DELETE') {
-             // For simplicity and reliability, reload all markers on DELETE
-             // This ensures we sync correctly without needing full replica identity
-             console.log('DELETE event received, refreshing all markers...');
-             // Clear existing markers first (except self)
-             Object.keys(otherMarkers).forEach(key => {
-               otherMarkers[key].remove();
-               delete otherMarkers[key];
-             });
-             friendData = []; // Clear list data
-             updateFriendList(); // Clear UI list
-             
-             // Fetch fresh data
-             supabaseClient.from('locations').select('*').then(({ data, error }) => {
-               if (!error && data) {
-                 data.forEach(updateMarker);
-               }
-             });
-          }
-        })
-        .subscribe((status) => {
-          console.log('Subscription status:', status);
-          if (status === 'SUBSCRIBED') {
-             // alert('กำลังติดตามตำแหน่งเพื่อนๆ...'); // Don't alert to avoid annoyance
-             console.log('Realtime subscribed');
-          }
-        });
-        
-      // Auto-refresh every 10 seconds as a fallback
-      setInterval(() => {
-        console.log('Auto-refreshing locations...');
-        supabaseClient.from('locations').select('*').then(({ data, error }) => {
-          if (!error && data) {
-            data.forEach(updateMarker);
-          }
-        });
-      }, 10000);
     }
+
+    let realtimeChannel = null;
+    let refreshInterval = null;
+
+    function subscribeToLocations() {
+      if (!supabaseClient) return alert('Supabase client not initialized');
+
+      // Fetch existing locations
+      fetchLocations(true);
+
+      // Subscribe to realtime changes (only once)
+      if (!realtimeChannel) {
+        realtimeChannel = supabaseClient
+          .channel('public:locations')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              updateMarker(payload.new);
+            } else if (payload.eventType === 'DELETE') {
+              clearOtherMarkers();
+              fetchLocations(false);
+            }
+          })
+          .subscribe();
+      }
+
+      // Auto-refresh every 10 seconds (only once)
+      if (!refreshInterval) {
+        refreshInterval = setInterval(() => {
+          fetchLocations(false);
+        }, 10000);
+      }
+    }
+
+    // Handle room change
+    window.addEventListener('hashchange', () => {
+      updateRoomTitle();
+      // Update userId for new room
+      userId = getRoomUserId(baseUserId);
+      console.log('Room changed:', getRoom(), 'userId:', userId);
+      // Clear and refetch with new room filter
+      clearOtherMarkers();
+      fetchLocations(true);
+    });
 
     let friendData = []; // Store friend data for list
 
@@ -609,30 +603,6 @@
 
         listContainer.appendChild(item);
       });
-    }
-
-    function removeMarker(locationId) {
-      console.log('Removing marker with ID:', locationId);
-      // We need to find user_id from locationId, or we need location to include user_id on delete
-      // Supabase default DELETE payload only includes ID.
-      // We can iterate friendData to find the matching ID.
-      const friendIndex = friendData.findIndex(f => f.id === locationId);
-      if (friendIndex >= 0) {
-        const userIdToRemove = friendData[friendIndex].user_id;
-        
-        // Remove from Map
-        if (otherMarkers[userIdToRemove]) {
-          otherMarkers[userIdToRemove].remove();
-          delete otherMarkers[userIdToRemove];
-        }
-        
-        // Remove from List
-        friendData.splice(friendIndex, 1);
-        updateFriendList();
-      } else {
-        // Fallback: Refresh all data if ID not found (safe)
-        subscribeToLocations();
-      }
     }
 
     const ONLINE_THRESHOLD_MS = 15 * 60 * 1000; // 15 min
