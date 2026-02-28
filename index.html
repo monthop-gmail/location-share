@@ -381,9 +381,12 @@
 
     async function updateLocation(position, displayName) {
         const { latitude, longitude } = position.coords;
-        
-        // Update map view only on first start or significant move? 
-        // Or just update marker. Let's just update marker to not annoy user panning.
+
+        if (!isInBounds({ lat: latitude, lng: longitude })) {
+          console.warn('Location outside supported region:', latitude, longitude);
+          return;
+        }
+
         if (!myMarker) {
            map.setView([latitude, longitude], 15);
         }
@@ -645,9 +648,15 @@
       return locDate === nowDate;
     }
 
+    // Geographic boundary: Thailand + nearby (lat 0-25, lng 90-115)
+    function isInBounds(loc) {
+      return loc.lat >= 0 && loc.lat <= 25 && loc.lng >= 90 && loc.lng <= 115;
+    }
+
     function updateMarker(loc) {
       if (loc.user_id === userId) return; // Don't show myself as "other"
       if (!isToday(loc)) return; // Only show today's entries
+      if (!isInBounds(loc)) return; // Filter out locations outside region
 
       // Filter by room — only show users in the same room
       const room = getRoom();
