@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <meta name="description" content="แชร์ตำแหน่งแบบเรียลไทม์สำหรับกลุ่ม LINE" />
   <title>แชร์ตำแหน่งเพื่อน</title>
+  <style id="groupBadgeStyle">
+    .group-badge {
+      display: inline-block;
+      background: rgba(0,191,165,0.12);
+      color: #009688;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+    }
+  </style>
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <!-- Google Fonts -->
@@ -183,6 +195,7 @@
 <body>
   <div id="map"></div>
   <div class="controls">
+    <div id="groupBadge" class="group-badge" style="display:none;"></div>
     <div class="input-group">
       <input type="text" id="displayName" placeholder="ใส่ชื่อเล่นของคุณที่นี่...">
     </div>
@@ -231,6 +244,24 @@
       alert('Supabase init error: ' + e.message);
     }
 
+    // --- Group/Room from URL hash ---
+    function getRoom() {
+      const hash = window.location.hash.replace('#', '').trim();
+      return hash || 'main';
+    }
+    function getRoomUserId(baseId) {
+      const room = getRoom();
+      return room === 'main' ? baseId : `${baseId}@${room}`;
+    }
+
+    // Show group badge
+    const currentRoom = getRoom();
+    if (currentRoom !== 'main') {
+      const badge = document.getElementById('groupBadge');
+      badge.textContent = `#${currentRoom}`;
+      badge.style.display = 'inline-block';
+    }
+
     const map = L.map('map').setView([13.7563, 100.5018], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors'
@@ -238,14 +269,14 @@
 
     let myMarker = null;
     let otherMarkers = {};
-    let userId = localStorage.getItem('user_id');
-    
+    let baseUserId = localStorage.getItem('user_id');
+
     // Auto-fit bounds on load
     function fitAllMarkers() {
-      const group = new L.featureGroup(Object.values(otherMarkers));
-      if (myMarker) group.addLayer(myMarker);
-      if (group.getLayers().length > 0) {
-        map.fitBounds(group.getBounds().pad(0.1));
+      const fg = new L.featureGroup(Object.values(otherMarkers));
+      if (myMarker) fg.addLayer(myMarker);
+      if (fg.getLayers().length > 0) {
+        map.fitBounds(fg.getBounds().pad(0.1));
       }
     }
 
@@ -254,14 +285,18 @@
     if (savedName) {
       document.getElementById('displayName').value = savedName;
     }
-    
-    if (!userId) {
-      userId = 'user_' + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('user_id', userId);
-      console.log('Generated new user ID:', userId);
+
+    if (!baseUserId) {
+      baseUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('user_id', baseUserId);
+      console.log('Generated new user ID:', baseUserId);
     } else {
-      console.log('Using existing user ID:', userId);
+      console.log('Using existing user ID:', baseUserId);
     }
+
+    // Effective userId includes room
+    let userId = getRoomUserId(baseUserId);
+    console.log('Room:', currentRoom, 'userId:', userId);
 
     // Auto-subscribe on load
     subscribeToLocations();
@@ -571,6 +606,16 @@
 
     function updateMarker(loc) {
       if (loc.user_id === userId) return; // Don't show myself as "other"
+
+      // Filter by room — only show users in the same room
+      const room = getRoom();
+      if (room === 'main') {
+        // main room: only show user_ids without @
+        if (loc.user_id.includes('@')) return;
+      } else {
+        // named room: only show user_ids ending with @room
+        if (!loc.user_id.endsWith('@' + room)) return;
+      }
 
       // Update or Add to friendData
       const existingIndex = friendData.findIndex(f => f.user_id === loc.user_id);
