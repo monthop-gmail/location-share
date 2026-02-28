@@ -1,42 +1,70 @@
-# 🗺️ ROADMAP: location-share
+# ROADMAP: location-share
 
-PWA แชร์ตำแหน่งแบบเรียลไทม์สำหรับกลุ่ม LINE — deploy บน Cloudflare Pages
-
----
-
-## Phase 1: Foundation (✅ Done)
-- ✅ สร้าง repo และโครงสร้างพื้นฐาน
-- ✅ หน้าเว็บหลักพร้อมแผนที่ (Leaflet + OpenStreetMap)
-- ✅ ปุ่ม 'แชร์ตำแหน่งของฉัน' และ 'ดูตำแหน่งเพื่อน'
-- ✅ Deploy ได้ผ่าน Cloudflare Pages
-
-## Phase 2: Realtime Sync
-- เชื่อม Supabase Realtime Database
-- Table `locations`: `user_id`, `lat`, `lng`, `updated_at`, `expires_at` (15 นาที)
-- Auto-delete ตำแหน่งเก่าผ่าน Supabase function
-
-## Phase 3: LINE Integration
-- รองรับ LINE Login (`@line/liff`)
-- แสดงชื่อและ avatar จาก LINE Profile
-- จำกัดการดูตำแหน่งเฉพาะกลุ่มที่มี `group_id`
-
-## Phase 4: UX & Security
-- แจ้งสถานะ GPS (อนุญาต/ปฏิเสธ/ไม่รองรับ)
-- แสดง timestamp ตำแหน่งล่าสุด
-- ตั้งค่า Row Level Security (RLS) บน Supabase
-
-## Phase 5: Production Ready
-- ตั้งค่า branch protection: ต้องมี approval + CI pass ก่อน merge
-- เอกสารการใช้งาน (ภาษาไทย)
-- ลิงก์ issue tracker และ support
+PWA แชร์ตำแหน่งแบบเรียลไทม์สำหรับกลุ่ม LINE — deploy บน Cloudflare Pages + Supabase
 
 ---
 
-### ✅ Success Criteria
-- ผู้ใช้ 2+ คนเปิดเว็บพร้อมกัน → มองเห็นตำแหน่งกันแบบ real-time ภายใน < 3 วินาที
-- ไม่มี backend code ที่ต้องจัดการเอง (ใช้แค่ Cloudflare Pages + Supabase)
-- ใช้งานได้บน LINE Browser, Chrome, Safari
+## Phase 1: Foundation — Done
 
-### 📅 Timeline (ประมาณการ)
-- Phase 2: ภายใน 1 วัน
-- Phase 3–5: ภายใน 3 วัน
+- [x] สร้าง repo และโครงสร้างพื้นฐาน
+- [x] หน้าเว็บหลักพร้อมแผนที่ (Leaflet + OpenStreetMap)
+- [x] ปุ่มแชร์/หยุดแชร์ตำแหน่ง
+- [x] Deploy บน Cloudflare Pages (auto-deploy)
+
+## Phase 2: Realtime Sync — Done
+
+- [x] เชื่อม Supabase Realtime Database
+- [x] Table `locations`: `user_id`, `lat`, `lng`, `display_name`, `updated_at`, `expires_at`
+- [x] DB trigger: `updated_at` + `expires_at` ใช้ server time (ไม่ใช้ client clock)
+- [x] Auto-refresh ทุก 10 วินาที + Realtime subscription
+
+## Phase 3: Friend List & Navigation — Done
+
+- [x] รายชื่อเพื่อน online/offline (threshold 15 นาที)
+- [x] ค้นหาเพื่อน (ชื่อ / online / offline)
+- [x] กดชื่อเพื่อน → zoom ไปหา
+- [x] ปุ่มนำทาง Google Maps
+- [x] Fit Zoom ดูเพื่อนทุกคน
+
+## Phase 4: Room/Group — Done
+
+- [x] แยกห้องด้วย `#ชื่อห้อง` ต่อท้าย URL
+- [x] รองรับชื่อห้องภาษาไทย
+- [x] hashchange handler (เปลี่ยนห้องไม่ต้อง reload)
+- [x] แต่ละห้องเห็นเฉพาะคนในห้องเดียวกัน
+
+## Phase 5: Route Drawing — Done
+
+- [x] วาดเส้นทางบนแผนที่ (Leaflet-Draw)
+- [x] บันทึกลง Supabase ตาราง `routes`
+- [x] Realtime sync เส้นทาง
+- [x] รายการเส้นทาง + ลบ + tap to zoom
+- [x] แยกเส้นทางตาม room
+
+## Phase 6: Security & Stability — Done
+
+- [x] XSS prevention (`escapeHtml`)
+- [x] Geographic boundary filter (lat 0-25, lng 90-115)
+- [x] GPS error handling (Thai messages)
+- [x] Supabase RLS (SELECT/INSERT/UPDATE/DELETE)
+- [x] Cache-busting headers สำหรับ LINE Browser
+
+## Phase 7: Documentation — Done
+
+- [x] คู่มือผู้ใช้ภาษาไทย ([USER_GUIDE.md](USER_GUIDE.md))
+- [x] DB schema ([db_schema.sql](db_schema.sql))
+- [x] Migration guide ([MIGRATE.md](MIGRATE.md))
+
+---
+
+## Open Issues
+
+- [#2 Manual Location Picker](https://github.com/monthop-gmail/location-share/issues/2)
+- [#3 Stricter RLS Policies](https://github.com/monthop-gmail/location-share/issues/3)
+
+## Closed Issues
+
+- [#1 Route/Polyline Support](https://github.com/monthop-gmail/location-share/issues/1)
+- [#4 Schema: DELETE policy + display_name](https://github.com/monthop-gmail/location-share/issues/4)
+- [#5 Room switch refresh](https://github.com/monthop-gmail/location-share/issues/5)
+- [#6 Cleanup dead code + console spam](https://github.com/monthop-gmail/location-share/issues/6)
