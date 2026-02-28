@@ -257,6 +257,90 @@
       border-radius: 4px;
     }
     .route-delete:active { color: #F44336; }
+
+    button#pinBtn {
+      background: #f8f9fa;
+      color: #555;
+      border: 1px solid #e0e0e0;
+      padding: 13px;
+      font-size: 15px;
+    }
+    button#pinBtn:active { background: #eee; }
+    button#pinBtn.pinning {
+      background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%);
+      color: white;
+      border: none;
+      box-shadow: 0 4px 15px rgba(156, 39, 176, 0.35);
+    }
+
+    .pin-list {
+      margin-top: 12px;
+      border-top: 1px solid #eee;
+      padding-top: 8px;
+    }
+    .pin-header {
+      font-size: 14px;
+      font-weight: 500;
+      color: #555;
+      margin-bottom: 6px;
+    }
+    .pin-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-bottom: 1px solid #f0f0f0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .pin-item:active { background: #f5f5f5; }
+    .pin-item-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pin-icon { font-size: 18px; flex-shrink: 0; }
+    .pin-name { font-size: 14px; color: #333; }
+    .pin-delete {
+      background: none;
+      border: none;
+      color: #ccc;
+      font-size: 18px;
+      padding: 4px 8px;
+      cursor: pointer;
+      width: auto;
+      border-radius: 4px;
+    }
+    .pin-delete:active { color: #F44336; }
+    .pin-nav {
+      background: none;
+      border: none;
+      font-size: 18px;
+      padding: 4px 8px;
+      cursor: pointer;
+      width: auto;
+      border-radius: 4px;
+    }
+
+    .icon-picker {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin: 10px 0;
+    }
+    .icon-option {
+      font-size: 28px;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 8px;
+      border: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .icon-option:hover, .icon-option.selected {
+      border-color: #9C27B0;
+      background: rgba(156, 39, 176, 0.08);
+    }
   </style>
 </head>
 <body>
@@ -279,6 +363,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         <span id="drawText">วาดเส้นทาง</span>
       </button>
+      <button id="pinBtn" onclick="togglePinMode()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        <span id="pinText">ปักหมุดจุดหมาย</span>
+      </button>
     </div>
     
     <div class="input-group" style="margin-bottom:8px; margin-top:12px;">
@@ -291,6 +379,10 @@
     <div id="routeList" class="route-list" style="display:none;">
       <div class="route-header">เส้นทาง (<span id="routeCount">0</span>)</div>
       <div id="routeItems"></div>
+    </div>
+    <div id="pinList" class="pin-list" style="display:none;">
+      <div class="pin-header">จุดหมาย (<span id="pinCount">0</span>)</div>
+      <div id="pinItems"></div>
     </div>
   </div>
 
@@ -929,10 +1021,239 @@
       console.error('Routes init error:', e);
     }
 
-    // Update hashchange to include routes
+    // ===== Destination Pins =====
+    var drawnPins = {};
+    var isPinning = false;
+    var pinChannel = null;
+    var pinData = [];
+    const PIN_ICONS = ['📍', '🏁', '☕', '⛽', '🅿️', '🏨'];
+
+    function togglePinMode() {
+      if (isPinning) {
+        stopPinMode();
+      } else {
+        startPinMode();
+      }
+    }
+
+    function startPinMode() {
+      isPinning = true;
+      const btn = document.getElementById('pinBtn');
+      btn.classList.add('pinning');
+      document.getElementById('pinText').innerText = 'ยกเลิกปักหมุด';
+      map.getContainer().style.cursor = 'crosshair';
+      map.once('click', onPinClick);
+    }
+
+    function stopPinMode() {
+      isPinning = false;
+      const btn = document.getElementById('pinBtn');
+      btn.classList.remove('pinning');
+      document.getElementById('pinText').innerText = 'ปักหมุดจุดหมาย';
+      map.getContainer().style.cursor = '';
+      map.off('click', onPinClick);
+    }
+
+    async function onPinClick(e) {
+      const latlng = e.latlng;
+
+      // Icon picker dialog
+      const iconPickerHtml = PIN_ICONS.map((ic, i) =>
+        `<span class="icon-option" data-icon="${ic}" onclick="document.querySelectorAll('.icon-option').forEach(el=>el.classList.remove('selected'));this.classList.add('selected')">${ic}</span>`
+      ).join('');
+
+      const dialog = document.createElement('div');
+      dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+      dialog.innerHTML = `
+        <div style="background:white;border-radius:16px;padding:24px;width:90%;max-width:320px;font-family:'Kanit',sans-serif;">
+          <div style="font-size:16px;font-weight:500;margin-bottom:12px;text-align:center;">ปักหมุดจุดหมาย</div>
+          <input type="text" id="pinNameInput" placeholder="ชื่อจุดหมาย..." style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:16px;font-family:'Kanit',sans-serif;margin-bottom:8px;">
+          <div style="font-size:14px;color:#666;margin-bottom:4px;text-align:center;">เลือกไอคอน</div>
+          <div class="icon-picker">${iconPickerHtml}</div>
+          <div style="display:flex;gap:10px;">
+            <button onclick="this.closest('div[style*=fixed]').dataset.result='cancel';this.closest('div[style*=fixed]').remove()" style="flex:1;padding:12px;border-radius:10px;border:1px solid #ddd;background:#f8f9fa;font-family:'Kanit',sans-serif;font-size:15px;cursor:pointer;">ยกเลิก</button>
+            <button onclick="this.closest('div[style*=fixed]').dataset.result='ok';this.closest('div[style*=fixed]').dispatchEvent(new Event('confirm'))" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#9C27B0,#7B1FA2);color:white;font-family:'Kanit',sans-serif;font-size:15px;cursor:pointer;">บันทึก</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(dialog);
+
+      // Select first icon by default
+      dialog.querySelector('.icon-option').classList.add('selected');
+      dialog.querySelector('#pinNameInput').focus();
+
+      // Wait for user action
+      const result = await new Promise(resolve => {
+        dialog.addEventListener('confirm', () => {
+          const name = dialog.querySelector('#pinNameInput').value.trim();
+          const selectedIcon = dialog.querySelector('.icon-option.selected');
+          const icon = selectedIcon ? selectedIcon.dataset.icon : '📍';
+          dialog.remove();
+          resolve({ name, icon });
+        });
+        dialog.addEventListener('click', (ev) => {
+          if (ev.target === dialog) {
+            dialog.remove();
+            resolve(null);
+          }
+        });
+      });
+
+      if (!result || !result.name) {
+        stopPinMode();
+        return;
+      }
+
+      const { error } = await supabaseClient
+        .from('pins')
+        .insert({
+          room: getRoom(),
+          name: result.name,
+          lat: latlng.lat,
+          lng: latlng.lng,
+          icon: result.icon,
+          created_by: userId
+        });
+
+      if (error) {
+        console.error('Save pin error:', error);
+        alert('บันทึกหมุดไม่สำเร็จ');
+      }
+
+      stopPinMode();
+    }
+
+    function renderPin(pin) {
+      if (drawnPins[pin.id]) {
+        drawnPins[pin.id].remove();
+      }
+      const icon = L.divIcon({
+        html: `<div style="font-size:28px;text-align:center;line-height:1;">${pin.icon || '📍'}</div>`,
+        className: '',
+        iconSize: [32, 32],
+        iconAnchor: [16, 28],
+        popupAnchor: [0, -28]
+      });
+      const marker = L.marker([pin.lat, pin.lng], { icon: icon }).addTo(map);
+      marker.bindPopup(`
+        <div style="text-align:center;font-family:'Kanit',sans-serif;">
+          <div style="font-size:24px;">${pin.icon || '📍'}</div>
+          <b>${escapeHtml(pin.name)}</b>
+          <br>
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank"
+             style="display:inline-block;margin-top:8px;padding:6px 12px;background:#9C27B0;color:white;text-decoration:none;border-radius:4px;font-size:14px;">
+            🚗 นำทางไปจุดหมาย
+          </a>
+        </div>
+      `);
+      drawnPins[pin.id] = marker;
+    }
+
+    function clearPins() {
+      Object.keys(drawnPins).forEach(key => {
+        drawnPins[key].remove();
+        delete drawnPins[key];
+      });
+      pinData = [];
+      updatePinList();
+    }
+
+    function fetchPins() {
+      const room = getRoom();
+      supabaseClient.from('pins').select('*').eq('room', room).then(({ data, error }) => {
+        if (!error && data) {
+          pinData = data;
+          data.forEach(renderPin);
+          updatePinList();
+        }
+      });
+    }
+
+    async function deletePin(id) {
+      if (!confirm('ลบหมุดนี้?')) return;
+      const { error } = await supabaseClient.from('pins').delete().eq('id', id);
+      if (error) console.error('Delete pin error:', error);
+    }
+
+    function updatePinList() {
+      const container = document.getElementById('pinItems');
+      const listSection = document.getElementById('pinList');
+      const countEl = document.getElementById('pinCount');
+
+      if (pinData.length === 0) {
+        listSection.style.display = 'none';
+        return;
+      }
+
+      listSection.style.display = 'block';
+      countEl.textContent = pinData.length;
+      container.innerHTML = '';
+
+      pinData.forEach(pin => {
+        const item = document.createElement('div');
+        item.className = 'pin-item';
+        item.onclick = () => {
+          if (drawnPins[pin.id]) {
+            map.flyTo([pin.lat, pin.lng], 16, { duration: 1 });
+            drawnPins[pin.id].openPopup();
+          }
+        };
+        item.innerHTML = `
+          <div class="pin-item-info">
+            <span class="pin-icon">${pin.icon || '📍'}</span>
+            <span class="pin-name">${escapeHtml(pin.name)}</span>
+          </div>
+        `;
+        const navBtn = document.createElement('a');
+        navBtn.href = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+        navBtn.target = '_blank';
+        navBtn.className = 'pin-nav';
+        navBtn.innerHTML = '🚗';
+        navBtn.onclick = (e) => e.stopPropagation();
+        item.appendChild(navBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'pin-delete';
+        delBtn.innerHTML = '✕';
+        delBtn.onclick = (e) => { e.stopPropagation(); deletePin(pin.id); };
+        item.appendChild(delBtn);
+        container.appendChild(item);
+      });
+    }
+
+    function subscribeToPins() {
+      if (pinChannel) return;
+      pinChannel = supabaseClient
+        .channel('public:pins')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'pins' }, payload => {
+          if (payload.eventType === 'INSERT') {
+            if (payload.new.room === getRoom()) {
+              pinData.push(payload.new);
+              renderPin(payload.new);
+              updatePinList();
+            }
+          } else if (payload.eventType === 'DELETE') {
+            clearPins();
+            fetchPins();
+          }
+        })
+        .subscribe();
+    }
+
+    // Init pins
+    try {
+      fetchPins();
+      subscribeToPins();
+    } catch (e) {
+      console.error('Pins init error:', e);
+    }
+
+    // Update hashchange to include routes + pins
     window.addEventListener('hashchange', () => {
       clearRoutes();
       fetchRoutes();
+      clearPins();
+      fetchPins();
     });
   </script>
 </body>
