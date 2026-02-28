@@ -394,11 +394,10 @@
         // Send to Supabase
         const { error } = await supabaseClient
           .from('locations')
-          .upsert({ 
-            user_id: userId, 
-            lat: latitude, 
+          .upsert({
+            user_id: userId,
+            lat: latitude,
             lng: longitude,
-            updated_at: new Date(),
             display_name: displayName
           }, { onConflict: 'user_id' });
           
