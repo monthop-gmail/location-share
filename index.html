@@ -758,6 +758,10 @@
     }
 
     function startDrawMode() {
+      if (typeof L.Draw === 'undefined') {
+        alert('กรุณารอสักครู่แล้วลองใหม่ (กำลังโหลด Draw plugin)');
+        return;
+      }
       isDrawing = true;
       const btn = document.getElementById('drawBtn');
       btn.classList.add('drawing');
@@ -784,7 +788,7 @@
     }
 
     // Listen for draw complete
-    map.on(L.Draw.Event.CREATED, async (e) => {
+    map.on('draw:created', async (e) => {
       const layer = e.layer;
       const latlngs = layer.getLatLngs().map(ll => [ll.lat, ll.lng]);
 
@@ -918,11 +922,14 @@
     }
 
     // Init routes
-    fetchRoutes();
-    subscribeToRoutes();
+    try {
+      fetchRoutes();
+      subscribeToRoutes();
+    } catch (e) {
+      console.error('Routes init error:', e);
+    }
 
     // Update hashchange to include routes
-    const origHashHandler = window.onhashchange;
     window.addEventListener('hashchange', () => {
       clearRoutes();
       fetchRoutes();
