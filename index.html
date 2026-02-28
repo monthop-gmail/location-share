@@ -248,7 +248,7 @@
       } else {
         // Access the global supabase object from the CDN
         supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        console.log('Supabase initialized successfully');
+        // Supabase initialized
       }
     } catch (e) {
       console.error('Supabase init error:', e);
@@ -308,14 +308,11 @@
     if (!baseUserId) {
       baseUserId = 'user_' + Math.random().toString(36).substr(2, 9);
       localStorage.setItem('user_id', baseUserId);
-      console.log('Generated new user ID:', baseUserId);
     } else {
-      console.log('Using existing user ID:', baseUserId);
     }
 
     // Effective userId includes room
     let userId = getRoomUserId(baseUserId);
-    console.log('Room:', getRoom(), 'userId:', userId);
 
     // Auto-subscribe on load
     subscribeToLocations();
@@ -425,7 +422,6 @@
       isSharing = false;
       updateShareButtonUI();
 
-      console.log('Stopping share for:', userId);
       const { error } = await supabaseClient
         .from('locations')
         .delete()
@@ -505,7 +501,6 @@
       updateRoomTitle();
       // Update userId for new room
       userId = getRoomUserId(baseUserId);
-      console.log('Room changed:', getRoom(), 'userId:', userId);
       // Clear and refetch with new room filter
       clearOtherMarkers();
       fetchLocations(true);

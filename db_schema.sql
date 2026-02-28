@@ -4,45 +4,49 @@ CREATE TABLE IF NOT EXISTS public.locations (
     user_id TEXT NOT NULL UNIQUE, -- Unique user_id for upsert
     lat FLOAT8 NOT NULL,
     lng FLOAT8 NOT NULL,
+    display_name TEXT,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at TIMESTAMPTZ -- Will be calculated by trigger
 );
 
--- 2. Create a function to auto-set expiration time
-CREATE OR REPLACE FUNCTION set_expires_at()
+-- 2. Create a function to auto-set updated_at and expires_at
+-- This ensures updated_at always uses server time (not client clock)
+CREATE OR REPLACE FUNCTION set_updated_and_expires()
 RETURNS TRIGGER AS $$
 BEGIN
-  -- Automatically set expires_at to 15 minutes after updated_at
-  NEW.expires_at = COALESCE(NEW.updated_at, NOW()) + INTERVAL '15 minutes';
+  NEW.updated_at = NOW();
+  NEW.expires_at = NOW() + INTERVAL '15 minutes';
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 -- 3. Create a trigger to run the function before INSERT or UPDATE
 DROP TRIGGER IF EXISTS trigger_set_expires_at ON public.locations;
-CREATE TRIGGER trigger_set_expires_at
+DROP TRIGGER IF EXISTS trigger_set_updated_and_expires ON public.locations;
+CREATE TRIGGER trigger_set_updated_and_expires
 BEFORE INSERT OR UPDATE ON public.locations
 FOR EACH ROW
-EXECUTE FUNCTION set_expires_at();
+EXECUTE FUNCTION set_updated_and_expires();
 
 -- 4. Enable Row Level Security (RLS)
 ALTER TABLE public.locations ENABLE ROW LEVEL SECURITY;
 
 -- 5. Create policies to allow public access (for now)
--- Allow anyone to insert their location
 DROP POLICY IF EXISTS "Enable insert for everyone" ON public.locations;
 CREATE POLICY "Enable insert for everyone" ON public.locations
     FOR INSERT WITH CHECK (true);
 
--- Allow anyone to read active locations
 DROP POLICY IF EXISTS "Enable select for everyone" ON public.locations;
 CREATE POLICY "Enable select for everyone" ON public.locations
     FOR SELECT USING (true);
 
--- Allow anyone to update their own location (based on user_id)
 DROP POLICY IF EXISTS "Enable update for everyone" ON public.locations;
 CREATE POLICY "Enable update for everyone" ON public.locations
     FOR UPDATE USING (true);
+
+DROP POLICY IF EXISTS "Enable delete for everyone" ON public.locations;
+CREATE POLICY "Enable delete for everyone" ON public.locations
+    FOR DELETE USING (true);
 
 -- 6. Optional: Create a function to clean up old locations
 -- This can be called via cron or manually
