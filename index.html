@@ -534,8 +534,8 @@
       });
     }
 
-    let realtimeChannel = null;
-    let refreshInterval = null;
+    var realtimeChannel = null;
+    var refreshInterval = null;
 
     function subscribeToLocations() {
       if (!supabaseClient) return alert('Supabase client not initialized');
