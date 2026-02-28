@@ -56,3 +56,28 @@ BEGIN
   DELETE FROM public.locations WHERE expires_at < NOW();
 END;
 $$ LANGUAGE plpgsql;
+
+-- 7. Routes table (for drawn polylines)
+CREATE TABLE IF NOT EXISTS public.routes (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    room TEXT NOT NULL DEFAULT 'main',
+    name TEXT,
+    coordinates JSONB NOT NULL,   -- [[lat,lng], [lat,lng], ...]
+    color TEXT DEFAULT '#3388ff',
+    created_by TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.routes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone can read routes" ON public.routes;
+CREATE POLICY "Anyone can read routes" ON public.routes
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Anyone can insert routes" ON public.routes;
+CREATE POLICY "Anyone can insert routes" ON public.routes
+    FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Anyone can delete routes" ON public.routes;
+CREATE POLICY "Anyone can delete routes" ON public.routes
+    FOR DELETE USING (true);

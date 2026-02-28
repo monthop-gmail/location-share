@@ -22,6 +22,7 @@
   </style>
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
@@ -195,6 +196,67 @@
       color: #999;
       font-weight: 300;
     }
+
+    button#drawBtn {
+      background: #f8f9fa;
+      color: #555;
+      border: 1px solid #e0e0e0;
+      padding: 13px;
+      font-size: 15px;
+    }
+    button#drawBtn:active { background: #eee; }
+    button#drawBtn.drawing {
+      background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+      color: white;
+      border: none;
+      box-shadow: 0 4px 15px rgba(255, 152, 0, 0.35);
+    }
+
+    .route-list {
+      margin-top: 12px;
+      border-top: 1px solid #eee;
+      padding-top: 8px;
+    }
+    .route-header {
+      font-size: 14px;
+      font-weight: 500;
+      color: #555;
+      margin-bottom: 6px;
+    }
+    .route-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-bottom: 1px solid #f0f0f0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .route-item:active { background: #f5f5f5; }
+    .route-item-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .route-color {
+      width: 20px;
+      height: 4px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .route-name { font-size: 14px; color: #333; }
+    .route-delete {
+      background: none;
+      border: none;
+      color: #ccc;
+      font-size: 18px;
+      padding: 4px 8px;
+      cursor: pointer;
+      width: auto;
+      border-radius: 4px;
+    }
+    .route-delete:active { color: #F44336; }
   </style>
 </head>
 <body>
@@ -213,6 +275,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
         ดูเพื่อนทุกคน (Fit Zoom)
       </button>
+      <button id="drawBtn" onclick="toggleDrawMode()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        <span id="drawText">วาดเส้นทาง</span>
+      </button>
     </div>
     
     <div class="input-group" style="margin-bottom:8px; margin-top:12px;">
@@ -222,10 +288,15 @@
       <!-- Friend items will be added here dynamically -->
       <div style="text-align:center; color:#999; padding:10px; font-size:14px;">ยังไม่มีเพื่อนแชร์ตำแหน่งขณะนี้</div>
     </div>
+    <div id="routeList" class="route-list" style="display:none;">
+      <div class="route-header">เส้นทาง (<span id="routeCount">0</span>)</div>
+      <div id="routeItems"></div>
+    </div>
   </div>
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <!-- Supabase JS -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
@@ -670,7 +741,192 @@
       }
     }
 
-    // Event listeners handled via onclick in HTML (toggleShare, fitAllMarkers)
+    // ===== Route Drawing =====
+    let drawnRoutes = {};
+    let isDrawing = false;
+    let drawHandler = null;
+    let routeChannel = null;
+    let routeData = [];
+    const ROUTE_COLORS = ['#3388ff', '#FF5252', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4'];
+
+    function toggleDrawMode() {
+      if (isDrawing) {
+        stopDrawMode();
+      } else {
+        startDrawMode();
+      }
+    }
+
+    function startDrawMode() {
+      isDrawing = true;
+      const btn = document.getElementById('drawBtn');
+      btn.classList.add('drawing');
+      document.getElementById('drawText').innerText = 'ยกเลิกวาด';
+
+      drawHandler = new L.Draw.Polyline(map, {
+        shapeOptions: {
+          color: ROUTE_COLORS[routeData.length % ROUTE_COLORS.length],
+          weight: 4
+        }
+      });
+      drawHandler.enable();
+    }
+
+    function stopDrawMode() {
+      isDrawing = false;
+      const btn = document.getElementById('drawBtn');
+      btn.classList.remove('drawing');
+      document.getElementById('drawText').innerText = 'วาดเส้นทาง';
+      if (drawHandler) {
+        drawHandler.disable();
+        drawHandler = null;
+      }
+    }
+
+    // Listen for draw complete
+    map.on(L.Draw.Event.CREATED, async (e) => {
+      const layer = e.layer;
+      const latlngs = layer.getLatLngs().map(ll => [ll.lat, ll.lng]);
+
+      if (latlngs.length < 2) {
+        stopDrawMode();
+        return;
+      }
+
+      const name = prompt('ตั้งชื่อเส้นทาง:', `เส้นทาง ${routeData.length + 1}`) || `เส้นทาง ${routeData.length + 1}`;
+      const color = ROUTE_COLORS[routeData.length % ROUTE_COLORS.length];
+
+      const { error } = await supabaseClient
+        .from('routes')
+        .insert({
+          room: getRoom(),
+          name: name,
+          coordinates: latlngs,
+          color: color,
+          created_by: userId
+        });
+
+      if (error) {
+        console.error('Save route error:', error);
+        alert('บันทึกเส้นทางไม่สำเร็จ');
+      }
+
+      stopDrawMode();
+    });
+
+    map.on('draw:drawstop', () => {
+      // User cancelled drawing without finishing
+      if (isDrawing) stopDrawMode();
+    });
+
+    function renderRoute(route) {
+      if (drawnRoutes[route.id]) {
+        drawnRoutes[route.id].remove();
+      }
+      const coords = route.coordinates.map(c => [c[0], c[1]]);
+      const polyline = L.polyline(coords, {
+        color: route.color || '#3388ff',
+        weight: 4,
+        opacity: 0.8
+      }).addTo(map);
+      polyline.bindPopup(`<b>${escapeHtml(route.name || 'เส้นทาง')}</b>`);
+      drawnRoutes[route.id] = polyline;
+    }
+
+    function clearRoutes() {
+      Object.keys(drawnRoutes).forEach(key => {
+        drawnRoutes[key].remove();
+        delete drawnRoutes[key];
+      });
+      routeData = [];
+      updateRouteList();
+    }
+
+    function fetchRoutes() {
+      const room = getRoom();
+      supabaseClient.from('routes').select('*').eq('room', room).then(({ data, error }) => {
+        if (!error && data) {
+          routeData = data;
+          data.forEach(renderRoute);
+          updateRouteList();
+        }
+      });
+    }
+
+    async function deleteRoute(id) {
+      if (!confirm('ลบเส้นทางนี้?')) return;
+      const { error } = await supabaseClient.from('routes').delete().eq('id', id);
+      if (error) console.error('Delete route error:', error);
+    }
+
+    function updateRouteList() {
+      const container = document.getElementById('routeItems');
+      const listSection = document.getElementById('routeList');
+      const countEl = document.getElementById('routeCount');
+
+      if (routeData.length === 0) {
+        listSection.style.display = 'none';
+        return;
+      }
+
+      listSection.style.display = 'block';
+      countEl.textContent = routeData.length;
+      container.innerHTML = '';
+
+      routeData.forEach(route => {
+        const item = document.createElement('div');
+        item.className = 'route-item';
+        item.onclick = () => {
+          if (drawnRoutes[route.id]) {
+            map.fitBounds(drawnRoutes[route.id].getBounds().pad(0.1));
+            drawnRoutes[route.id].openPopup();
+          }
+        };
+        item.innerHTML = `
+          <div class="route-item-info">
+            <div class="route-color" style="background:${route.color || '#3388ff'}"></div>
+            <span class="route-name">${escapeHtml(route.name || 'เส้นทาง')}</span>
+          </div>
+        `;
+        const delBtn = document.createElement('button');
+        delBtn.className = 'route-delete';
+        delBtn.innerHTML = '✕';
+        delBtn.onclick = (e) => { e.stopPropagation(); deleteRoute(route.id); };
+        item.appendChild(delBtn);
+        container.appendChild(item);
+      });
+    }
+
+    // Subscribe to route changes
+    function subscribeToRoutes() {
+      if (routeChannel) return;
+      routeChannel = supabaseClient
+        .channel('public:routes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'routes' }, payload => {
+          if (payload.eventType === 'INSERT') {
+            if (payload.new.room === getRoom()) {
+              routeData.push(payload.new);
+              renderRoute(payload.new);
+              updateRouteList();
+            }
+          } else if (payload.eventType === 'DELETE') {
+            clearRoutes();
+            fetchRoutes();
+          }
+        })
+        .subscribe();
+    }
+
+    // Init routes
+    fetchRoutes();
+    subscribeToRoutes();
+
+    // Update hashchange to include routes
+    const origHashHandler = window.onhashchange;
+    window.addEventListener('hashchange', () => {
+      clearRoutes();
+      fetchRoutes();
+    });
   </script>
 </body>
 </html>
