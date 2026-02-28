@@ -197,6 +197,9 @@
       </button>
     </div>
     
+    <div class="input-group" style="margin-bottom:8px; margin-top:12px;">
+      <input type="text" id="filterName" placeholder="ค้นหาชื่อเพื่อน..." oninput="updateFriendList()" style="padding:10px 14px; font-size:14px;">
+    </div>
     <div id="friendList" class="friend-list">
       <!-- Friend items will be added here dynamically -->
       <div style="text-align:center; color:#999; padding:10px; font-size:14px;">ยังไม่มีเพื่อนแชร์ตำแหน่งขณะนี้</div>
@@ -457,15 +460,30 @@
         return;
       }
 
+      // Filter by name
+      const filterText = (document.getElementById('filterName')?.value || '').trim().toLowerCase();
+      let filtered = friendData;
+      if (filterText) {
+        filtered = friendData.filter(f => {
+          const name = (f.display_name || f.user_id).toLowerCase();
+          return name.includes(filterText);
+        });
+      }
+
+      if (filtered.length === 0 && filterText) {
+        listContainer.innerHTML = '<div style="text-align:center; color:#999; padding:10px; font-size:14px;">ไม่พบชื่อที่ค้นหา</div>';
+        return;
+      }
+
       // Sort: online first, then by updated_at (newest first)
-      friendData.sort((a, b) => {
+      filtered.sort((a, b) => {
         const aOnline = isOnline(a) ? 1 : 0;
         const bOnline = isOnline(b) ? 1 : 0;
         if (bOnline !== aOnline) return bOnline - aOnline;
         return new Date(b.updated_at) - new Date(a.updated_at);
       });
 
-      friendData.forEach(friend => {
+      filtered.forEach(friend => {
         const displayName = friend.display_name || `User: ${friend.user_id.substring(0, 5)}...`;
         const online = isOnline(friend);
 
