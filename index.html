@@ -160,8 +160,23 @@
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: #4CAF50; /* Green for active */
+      flex-shrink: 0;
+    }
+    .status-dot.online {
+      background: #4CAF50;
       box-shadow: 0 0 5px rgba(76, 175, 80, 0.5);
+    }
+    .status-dot.offline {
+      background: #bbb;
+    }
+    .friend-item.offline {
+      opacity: 0.55;
+    }
+    .friend-item.offline .friend-name::after {
+      content: ' (offline)';
+      font-size: 12px;
+      color: #999;
+      font-weight: 300;
     }
   </style>
 </head>
@@ -442,42 +457,50 @@
         return;
       }
 
-      // Sort by updated_at (newest first)
-      friendData.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      // Sort: online first, then by updated_at (newest first)
+      friendData.sort((a, b) => {
+        const aOnline = isOnline(a) ? 1 : 0;
+        const bOnline = isOnline(b) ? 1 : 0;
+        if (bOnline !== aOnline) return bOnline - aOnline;
+        return new Date(b.updated_at) - new Date(a.updated_at);
+      });
 
       friendData.forEach(friend => {
         const displayName = friend.display_name || `User: ${friend.user_id.substring(0, 5)}...`;
-        
+        const online = isOnline(friend);
+
         // Calculate relative time
         const updatedTime = new Date(friend.updated_at);
         const now = new Date();
         const diffMs = now - updatedTime;
         const diffMins = Math.floor(diffMs / 60000);
-        
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+
         let timeText = 'เมื่อสักครู่';
-        if (diffMins > 0) timeText = `${diffMins} นาทีที่แล้ว`;
-        if (diffMins > 60) timeText = `เกิน 1 ชม.`;
+        if (diffMins > 0 && diffMins <= 60) timeText = `${diffMins} นาทีที่แล้ว`;
+        else if (diffHours > 0 && diffHours <= 24) timeText = `${diffHours} ชม.ที่แล้ว`;
+        else if (diffDays > 0) timeText = `${diffDays} วันที่แล้ว`;
 
         const item = document.createElement('div');
-        item.className = 'friend-item';
-        
+        item.className = online ? 'friend-item' : 'friend-item offline';
+
         // Navigation button inside friend item
         const navBtn = document.createElement('a');
         navBtn.href = `https://www.google.com/maps/dir/?api=1&destination=${friend.lat},${friend.lng}`;
         navBtn.target = '_blank';
         navBtn.innerHTML = '🚗';
         navBtn.style.cssText = 'padding: 8px; font-size: 20px; text-decoration: none;';
-        navBtn.onclick = (e) => e.stopPropagation(); // Prevent zooming when clicking nav
+        navBtn.onclick = (e) => e.stopPropagation();
 
         // Main item click to zoom
         item.onclick = () => {
-           console.log('Zooming to friend:', friend.user_id);
            map.flyTo([friend.lat, friend.lng], 16, { duration: 1.5 });
            if (otherMarkers[friend.user_id]) {
              otherMarkers[friend.user_id].openPopup();
            }
         };
-        
+
         item.innerHTML = `
           <div class="friend-info">
             <span class="friend-name">${displayName}</span>
@@ -485,11 +508,11 @@
           </div>
         `;
         item.appendChild(navBtn);
-        
+
         const statusDot = document.createElement('div');
-        statusDot.className = 'status-dot';
+        statusDot.className = online ? 'status-dot online' : 'status-dot offline';
         item.appendChild(statusDot);
-        
+
         listContainer.appendChild(item);
       });
     }
@@ -518,12 +541,14 @@
       }
     }
 
+    const ONLINE_THRESHOLD_MS = 15 * 60 * 1000; // 15 min
+
+    function isOnline(loc) {
+      return (Date.now() - new Date(loc.updated_at).getTime()) < ONLINE_THRESHOLD_MS;
+    }
+
     function updateMarker(loc) {
       if (loc.user_id === userId) return; // Don't show myself as "other"
-
-      // Check if expired
-      const expiresAt = new Date(loc.updated_at).getTime() + 15 * 60 * 1000;
-      if (Date.now() > expiresAt) return; 
 
       // Update or Add to friendData
       const existingIndex = friendData.findIndex(f => f.user_id === loc.user_id);
@@ -535,13 +560,17 @@
       // Re-render list
       updateFriendList();
 
+      const online = isOnline(loc);
       const displayName = loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`;
+      const statusBadge = online
+        ? '<span style="color:#4CAF50;font-size:12px;">● online</span>'
+        : '<span style="color:#999;font-size:12px;">● offline</span>';
       const popupContent = `
         <div style="text-align:center;">
-          <b>${displayName}</b><br>
+          <b>${displayName}</b> ${statusBadge}<br>
           <span style="font-size:12px;color:#666;">อัปเดต: ${new Date(loc.updated_at).toLocaleTimeString('th-TH')}</span>
           <br>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank" 
+          <a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank"
              style="display:inline-block; margin-top:8px; padding:6px 12px; background:#4285F4; color:white; text-decoration:none; border-radius:4px; font-size:14px;">
             🚗 นำทางไปหา
           </a>
@@ -550,9 +579,10 @@
 
       if (otherMarkers[loc.user_id]) {
         otherMarkers[loc.user_id].setLatLng([loc.lat, loc.lng])
-          .setPopupContent(popupContent);
+          .setPopupContent(popupContent)
+          .setOpacity(online ? 1.0 : 0.4);
       } else {
-        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng])
+        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng], { opacity: online ? 1.0 : 0.4 })
           .addTo(map)
           .bindPopup(popupContent);
       }
