@@ -2,7 +2,7 @@
 
 แอปแชร์ตำแหน่งแบบเรียลไทม์ เปิดจากมือถือแล้วเห็นตำแหน่งเพื่อนทันที
 
-**เปิดแอป:** https://location-share-9a0.pages.dev
+**เปิดแอป:** https://location-share.pages.dev
 
 ---
 
@@ -53,9 +53,9 @@
 ### ตัวอย่าง
 | URL | ห้อง |
 |-----|------|
-| `https://location-share-9a0.pages.dev` | ห้องหลัก (main) |
-| `https://location-share-9a0.pages.dev/#ทีมA` | ห้อง "ทีมA" |
-| `https://location-share-9a0.pages.dev/#trip2026` | ห้อง "trip2026" |
+| `https://location-share.pages.dev` | ห้องหลัก (main) |
+| `https://location-share.pages.dev/#ทีมA` | ห้อง "ทีมA" |
+| `https://location-share.pages.dev/#trip2026` | ห้อง "trip2026" |
 
 - แต่ละห้องเห็นแค่คนในห้องเดียวกัน
 - ส่งลิงก์ห้องให้เพื่อน → เปิดลิงก์เดียวกัน → เห็นกันทันที
