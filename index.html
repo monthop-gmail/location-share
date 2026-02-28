@@ -460,10 +460,14 @@
         return;
       }
 
-      // Filter by name
+      // Filter by name or keyword (online/offline)
       const filterText = (document.getElementById('filterName')?.value || '').trim().toLowerCase();
       let filtered = friendData;
-      if (filterText) {
+      if (filterText === 'online') {
+        filtered = friendData.filter(f => isOnline(f));
+      } else if (filterText === 'offline') {
+        filtered = friendData.filter(f => !isOnline(f));
+      } else if (filterText) {
         filtered = friendData.filter(f => {
           const name = (f.display_name || f.user_id).toLowerCase();
           return name.includes(filterText);
