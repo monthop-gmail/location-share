@@ -499,9 +499,12 @@
         return;
       }
 
+      // Only show today's entries
+      const today = new Date().toDateString();
+      let filtered = friendData.filter(f => new Date(f.updated_at).toDateString() === today);
+
       // Filter by name or keyword (online/offline)
       const filterText = (document.getElementById('filterName')?.value || '').trim().toLowerCase();
-      let filtered = friendData;
       if (filterText === 'online') {
         filtered = friendData.filter(f => isOnline(f));
       } else if (filterText === 'offline') {
@@ -608,8 +611,13 @@
       return (Date.now() - new Date(loc.updated_at).getTime()) < ONLINE_THRESHOLD_MS;
     }
 
+    function isToday(loc) {
+      return new Date(loc.updated_at).toDateString() === new Date().toDateString();
+    }
+
     function updateMarker(loc) {
       if (loc.user_id === userId) return; // Don't show myself as "other"
+      if (!isToday(loc)) return; // Only show today's entries
 
       // Filter by room — only show users in the same room
       const room = getRoom();
