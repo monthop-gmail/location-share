@@ -509,25 +509,25 @@
         return;
       }
 
-      // Only show today's entries
-      const today = new Date().toDateString();
-      let filtered = friendData.filter(f => new Date(f.updated_at).toDateString() === today);
+      // friendData already filtered by isToday() in updateMarker
+      let filtered = [...friendData];
 
       // Filter by name or keyword (online/offline)
       const filterText = (document.getElementById('filterName')?.value || '').trim().toLowerCase();
       if (filterText === 'online') {
-        filtered = friendData.filter(f => isOnline(f));
+        filtered = filtered.filter(f => isOnline(f));
       } else if (filterText === 'offline') {
-        filtered = friendData.filter(f => !isOnline(f));
+        filtered = filtered.filter(f => !isOnline(f));
       } else if (filterText) {
-        filtered = friendData.filter(f => {
+        filtered = filtered.filter(f => {
           const name = (f.display_name || f.user_id).toLowerCase();
           return name.includes(filterText);
         });
       }
 
-      if (filtered.length === 0 && filterText) {
-        listContainer.innerHTML = '<div style="text-align:center; color:#999; padding:10px; font-size:14px;">ไม่พบชื่อที่ค้นหา</div>';
+      if (filtered.length === 0) {
+        const msg = filterText ? 'ไม่พบชื่อที่ค้นหา' : 'ยังไม่มีเพื่อนแชร์ตำแหน่งวันนี้';
+        listContainer.innerHTML = `<div style="text-align:center; color:#999; padding:10px; font-size:14px;">${msg}</div>`;
         return;
       }
 
@@ -622,7 +622,10 @@
     }
 
     function isToday(loc) {
-      return new Date(loc.updated_at).toDateString() === new Date().toDateString();
+      const opts = { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' };
+      const locDate = new Date(loc.updated_at).toLocaleDateString('en-CA', opts);
+      const nowDate = new Date().toLocaleDateString('en-CA', opts);
+      return locDate === nowDate;
     }
 
     function updateMarker(loc) {
