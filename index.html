@@ -230,6 +230,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
   <script>
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
     // Configuration - Replace with your own Supabase project details
     const SUPABASE_URL = 'https://kzfsndyatfzszhyuogbq.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6ZnNuZHlhdGZ6c3poeXVvZ2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMzQwMjksImV4cCI6MjA4NzYxMDAyOX0.Gl7v-x0LVq3BZtR_kPMxmSLvOTsJgynpO0eRHg3Ny4I';
@@ -356,8 +362,19 @@
 
       // Start watching
       watchId = navigator.geolocation.watchPosition(
-           (pos) => updateLocationFromWatch(pos), 
-           (err) => console.error(err),
+           (pos) => updateLocationFromWatch(pos),
+           (err) => {
+             console.error('Geolocation error:', err);
+             isSharing = false;
+             updateShareButtonUI();
+             if (err.code === 1) {
+               alert('กรุณาอนุญาตการเข้าถึงตำแหน่ง (GPS) ในการตั้งค่าเบราว์เซอร์');
+             } else if (err.code === 2) {
+               alert('ไม่สามารถระบุตำแหน่งได้ กรุณาลองใหม่');
+             } else if (err.code === 3) {
+               alert('หมดเวลาในการระบุตำแหน่ง กรุณาลองใหม่');
+             }
+           },
            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     }
@@ -373,7 +390,7 @@
         
         if (myMarker) myMarker.remove();
         myMarker = L.marker([latitude, longitude]).addTo(map)
-          .bindPopup(`<b>${displayName}</b> (คุณ)<br>กำลังแชร์...`).openPopup();
+          .bindPopup(`<b>${escapeHtml(displayName)}</b> (คุณ)<br>กำลังแชร์...`).openPopup();
 
         // Send to Supabase
         const { error } = await supabaseClient
@@ -540,7 +557,7 @@
       });
 
       filtered.forEach(friend => {
-        const displayName = friend.display_name || `User: ${friend.user_id.substring(0, 5)}...`;
+        const displayName = escapeHtml(friend.display_name || `User: ${friend.user_id.substring(0, 5)}...`);
         const online = isOnline(friend);
 
         // Calculate relative time
@@ -653,7 +670,7 @@
       updateFriendList();
 
       const online = isOnline(loc);
-      const displayName = loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`;
+      const displayName = escapeHtml(loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`);
       const statusBadge = online
         ? '<span style="color:#4CAF50;font-size:12px;">● online</span>'
         : '<span style="color:#999;font-size:12px;">● offline</span>';
