@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS public.locations (
     lng FLOAT8 NOT NULL,
     display_name TEXT,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ -- Will be calculated by trigger
+    expires_at TIMESTAMPTZ, -- Will be calculated by trigger
+    is_sharing BOOLEAN DEFAULT true -- false = soft delete (stopped sharing)
 );
 
 -- 2. Create a function to auto-set updated_at and expires_at

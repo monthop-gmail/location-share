@@ -65,6 +65,12 @@ CREATE POLICY "Anyone can insert pins" ON public.pins FOR INSERT WITH CHECK (tru
 CREATE POLICY "Anyone can delete pins" ON public.pins FOR DELETE USING (true);
 ```
 
+## Migration 4: เพิ่ม is_sharing column (soft delete)
+
+```sql
+ALTER TABLE public.locations ADD COLUMN IF NOT EXISTS is_sharing BOOLEAN DEFAULT true;
+```
+
 ---
 
 Schema ทั้งหมดดู [db_schema.sql](db_schema.sql)

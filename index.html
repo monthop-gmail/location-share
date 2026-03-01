@@ -187,13 +187,26 @@
     .status-dot.offline {
       background: #bbb;
     }
+    .status-dot.stopped {
+      background: #f44336;
+      box-shadow: 0 0 5px rgba(244, 67, 54, 0.5);
+    }
     .friend-item.offline {
       opacity: 0.55;
+    }
+    .friend-item.stopped {
+      opacity: 0.45;
     }
     .friend-item.offline .friend-name::after {
       content: ' (offline)';
       font-size: 12px;
       color: #999;
+      font-weight: 300;
+    }
+    .friend-item.stopped .friend-name::after {
+      content: ' (หยุดแชร์)';
+      font-size: 12px;
+      color: #f44336;
       font-weight: 300;
     }
 
@@ -347,6 +360,9 @@
   <div id="map"></div>
   <div class="controls">
     <div id="groupBadge" class="group-badge" style="display:none;"></div>
+    <div id="adminBadge" style="display:none; margin-bottom:8px;">
+      <span style="display:inline-block; background:rgba(244,67,54,0.1); color:#d32f2f; font-size:13px; font-weight:500; padding:4px 12px; border-radius:20px; cursor:pointer;" onclick="toggleAdmin()">🔑 Admin Mode <span style="font-size:11px; color:#999;">(กดเพื่อปิด)</span></span>
+    </div>
     <div class="input-group">
       <input type="text" id="displayName" placeholder="ใส่ชื่อเล่นของคุณที่นี่...">
     </div>
@@ -477,6 +493,26 @@
     // Effective userId includes room
     let userId = getRoomUserId(baseUserId);
 
+    // Admin mode: ?admin=1 in URL or localStorage
+    var isAdmin = (new URLSearchParams(window.location.search).get('admin') === '1');
+    if (isAdmin) localStorage.setItem('admin_mode', '1');
+    if (!isAdmin && localStorage.getItem('admin_mode') === '1') isAdmin = true;
+    if (isAdmin) document.getElementById('adminBadge').style.display = 'block';
+
+    function toggleAdmin() {
+      isAdmin = !isAdmin;
+      if (isAdmin) {
+        localStorage.setItem('admin_mode', '1');
+        document.getElementById('adminBadge').style.display = 'block';
+      } else {
+        localStorage.removeItem('admin_mode');
+        document.getElementById('adminBadge').style.display = 'none';
+      }
+      // Re-render with new admin state
+      clearOtherMarkers();
+      fetchLocations(false);
+    }
+
     // Auto-subscribe on load
     subscribeToLocations();
 
@@ -561,7 +597,8 @@
             user_id: userId,
             lat: latitude,
             lng: longitude,
-            display_name: displayName
+            display_name: displayName,
+            is_sharing: true
           }, { onConflict: 'user_id' });
           
         if (error) console.error('Upsert error:', error);
@@ -586,7 +623,7 @@
 
       const { error } = await supabaseClient
         .from('locations')
-        .delete()
+        .update({ is_sharing: false })
         .eq('user_id', userId);
 
       if (error) {
@@ -596,7 +633,6 @@
           myMarker.remove();
           myMarker = null;
         }
-        // alert('เลิกแชร์ตำแหน่งเรียบร้อยแล้ว'); // No need to alert, UI change is enough
       }
     }
 
@@ -683,12 +719,14 @@
       // friendData already filtered by isToday() in updateMarker
       let filtered = [...friendData];
 
-      // Filter by name or keyword (online/offline)
+      // Filter by name or keyword (online/offline/stopped)
       const filterText = (document.getElementById('filterName')?.value || '').trim().toLowerCase();
       if (filterText === 'online') {
-        filtered = filtered.filter(f => isOnline(f));
+        filtered = filtered.filter(f => f.is_sharing !== false && isOnline(f));
       } else if (filterText === 'offline') {
-        filtered = filtered.filter(f => !isOnline(f));
+        filtered = filtered.filter(f => f.is_sharing !== false && !isOnline(f));
+      } else if (filterText === 'stopped' || filterText === 'หยุด') {
+        filtered = filtered.filter(f => f.is_sharing === false);
       } else if (filterText) {
         filtered = filtered.filter(f => {
           const name = (f.display_name || f.user_id).toLowerCase();
@@ -702,17 +740,22 @@
         return;
       }
 
-      // Sort: online first, then by updated_at (newest first)
+      // Sort: online first, offline second, stopped last
       filtered.sort((a, b) => {
-        const aOnline = isOnline(a) ? 1 : 0;
-        const bOnline = isOnline(b) ? 1 : 0;
+        const aSharing = a.is_sharing !== false;
+        const bSharing = b.is_sharing !== false;
+        if (aSharing !== bSharing) return aSharing ? -1 : 1;
+        const aOnline = aSharing && isOnline(a) ? 1 : 0;
+        const bOnline = bSharing && isOnline(b) ? 1 : 0;
         if (bOnline !== aOnline) return bOnline - aOnline;
         return new Date(b.updated_at) - new Date(a.updated_at);
       });
 
       filtered.forEach(friend => {
         const displayName = escapeHtml(friend.display_name || `User: ${friend.user_id.substring(0, 5)}...`);
-        const online = isOnline(friend);
+        const sharing = friend.is_sharing !== false;
+        const online = sharing && isOnline(friend);
+        const stopped = !sharing;
 
         // Calculate relative time
         const updatedTime = new Date(friend.updated_at);
@@ -728,7 +771,7 @@
         else if (diffDays > 0) timeText = `${diffDays} วันที่แล้ว`;
 
         const item = document.createElement('div');
-        item.className = online ? 'friend-item' : 'friend-item offline';
+        item.className = stopped ? 'friend-item stopped' : (online ? 'friend-item' : 'friend-item offline');
 
         // Navigation button inside friend item
         const navBtn = document.createElement('a');
@@ -755,7 +798,7 @@
         item.appendChild(navBtn);
 
         const statusDot = document.createElement('div');
-        statusDot.className = online ? 'status-dot online' : 'status-dot offline';
+        statusDot.className = stopped ? 'status-dot stopped' : (online ? 'status-dot online' : 'status-dot offline');
         item.appendChild(statusDot);
 
         listContainer.appendChild(item);
@@ -788,11 +831,23 @@
       // Filter by room — only show users in the same room
       const room = getRoom();
       if (room === 'main') {
-        // main room: only show user_ids without @
         if (loc.user_id.includes('@')) return;
       } else {
-        // named room: only show user_ids ending with @room
         if (!loc.user_id.endsWith('@' + room)) return;
+      }
+
+      const sharing = loc.is_sharing !== false; // default true for old data
+
+      // Non-admin: skip stopped users and remove their markers
+      if (!sharing && !isAdmin) {
+        if (otherMarkers[loc.user_id]) {
+          otherMarkers[loc.user_id].remove();
+          delete otherMarkers[loc.user_id];
+        }
+        // Remove from friendData
+        friendData = friendData.filter(f => f.user_id !== loc.user_id);
+        updateFriendList();
+        return;
       }
 
       // Update or Add to friendData
@@ -802,14 +857,21 @@
       } else {
         friendData.push(loc);
       }
-      // Re-render list
       updateFriendList();
 
-      const online = isOnline(loc);
+      const online = sharing && isOnline(loc);
+      const stopped = !sharing;
       const displayName = escapeHtml(loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`);
-      const statusBadge = online
-        ? '<span style="color:#4CAF50;font-size:12px;">● online</span>'
-        : '<span style="color:#999;font-size:12px;">● offline</span>';
+
+      let statusBadge;
+      if (stopped) {
+        statusBadge = '<span style="color:#f44336;font-size:12px;">● หยุดแชร์</span>';
+      } else if (online) {
+        statusBadge = '<span style="color:#4CAF50;font-size:12px;">● online</span>';
+      } else {
+        statusBadge = '<span style="color:#999;font-size:12px;">● offline</span>';
+      }
+
       const popupContent = `
         <div style="text-align:center;">
           <b>${displayName}</b> ${statusBadge}<br>
@@ -822,12 +884,14 @@
         </div>
       `;
 
+      const opacity = stopped ? 0.25 : (online ? 1.0 : 0.4);
+
       if (otherMarkers[loc.user_id]) {
         otherMarkers[loc.user_id].setLatLng([loc.lat, loc.lng])
           .setPopupContent(popupContent)
-          .setOpacity(online ? 1.0 : 0.4);
+          .setOpacity(opacity);
       } else {
-        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng], { opacity: online ? 1.0 : 0.4 })
+        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng], { opacity: opacity })
           .addTo(map)
           .bindPopup(popupContent);
       }
