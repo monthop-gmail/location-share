@@ -215,3 +215,73 @@ echo "   ✅ a device can still delete its own location"
 
 echo
 echo "✅ row ownership verified"
+
+# ===== Stop-sharing retention (#11) =====
+# The trigger is BEFORE INSERT OR UPDATE and used to reset expires_at on every
+# write. If that still applied to a soft delete, the row would be swept away by
+# the expiry cron ~15 minutes later and the whole feature would quietly do
+# nothing. These assertions exist because that failure would be invisible.
+echo "→ checking stop-sharing retention"
+
+as_user "$A" "INSERT INTO public.locations (user_id, room, lat, lng, display_name)
+               VALUES ('dev_stop', 'main', 13.75, 100.50, 'A');" >/dev/null
+
+live_expiry=$(command psql "$DATABASE_URL" -tAc \
+  "SELECT round(EXTRACT(EPOCH FROM (expires_at - NOW())) / 60)
+   FROM public.locations WHERE user_id='dev_stop';")
+[ "$live_expiry" -le 16 ] && [ "$live_expiry" -ge 14 ] \
+  || { echo "   ❌ a sharing row should expire in ~15 min (got ${live_expiry}m)"; exit 1; }
+echo "   ✅ a sharing row still expires in ~15 minutes"
+
+# Backdate the position so we can tell whether the soft delete moves updated_at
+command psql "$DATABASE_URL" -q -c \
+  "UPDATE public.locations SET updated_at = NOW() - INTERVAL '40 minutes'
+   WHERE user_id='dev_stop';" >/dev/null
+before=$(command psql "$DATABASE_URL" -tAc \
+  "SELECT updated_at FROM public.locations WHERE user_id='dev_stop';")
+
+as_user "$A" "UPDATE public.locations SET is_sharing = false WHERE user_id='dev_stop';" >/dev/null
+
+after=$(command psql "$DATABASE_URL" -tAc \
+  "SELECT updated_at FROM public.locations WHERE user_id='dev_stop';")
+[ "$before" = "$after" ] \
+  || { echo "   ❌ stopping moved updated_at — the row would read as just-updated"; exit 1; }
+echo "   ✅ stopping leaves updated_at at the last real position"
+
+stopped_expiry=$(command psql "$DATABASE_URL" -tAc \
+  "SELECT round(EXTRACT(EPOCH FROM (expires_at - NOW())) / 3600)
+   FROM public.locations WHERE user_id='dev_stop';")
+[ "$stopped_expiry" = "24" ] \
+  || { echo "   ❌ a stopped row should be kept 24h (got ${stopped_expiry}h)"; exit 1; }
+echo "   ✅ a stopped row is kept for 24 hours"
+
+survived=$(command psql "$DATABASE_URL" -tAc \
+  "SELECT delete_expired_locations();
+   SELECT count(*) FROM public.locations WHERE user_id='dev_stop';" | tail -1)
+[ "$survived" = "1" ] \
+  || { echo "   ❌ the expiry cron deleted a stopped row"; exit 1; }
+echo "   ✅ the expiry cron leaves stopped rows alone"
+
+# Sharing again must clear the flag — on conflict this is an UPDATE, and a
+# column left out of the upsert would keep its old value.
+as_user "$A" "INSERT INTO public.locations (user_id, room, lat, lng, display_name, is_sharing)
+              VALUES ('dev_stop', 'main', 13.76, 100.51, 'A', true)
+              ON CONFLICT (user_id, room) DO UPDATE
+              SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, is_sharing = EXCLUDED.is_sharing;" >/dev/null
+resumed=$(command psql "$DATABASE_URL" -tAc \
+  "SELECT is_sharing FROM public.locations WHERE user_id='dev_stop';")
+[ "$resumed" = "t" ] || { echo "   ❌ sharing again did not clear the stopped flag"; exit 1; }
+echo "   ✅ sharing again clears the stopped flag"
+
+# Only the owner may soft delete — the flag must not be a way around ownership
+if as_user "$B" "UPDATE public.locations SET is_sharing = false WHERE user_id='dev_stop';" >/dev/null 2>&1; then
+  hijacked=$(command psql "$DATABASE_URL" -tAc \
+    "SELECT is_sharing FROM public.locations WHERE user_id='dev_stop';")
+  [ "$hijacked" = "t" ] || { echo "   ❌ another device flagged someone else as stopped"; exit 1; }
+fi
+echo "   ✅ one device cannot mark another as stopped"
+
+command psql "$DATABASE_URL" -q -c "DELETE FROM public.locations WHERE user_id='dev_stop';" >/dev/null
+
+echo
+echo "✅ stop-sharing retention verified"
