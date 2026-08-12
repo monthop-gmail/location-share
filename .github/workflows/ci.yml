@@ -67,6 +67,27 @@ jobs:
           # host/port/user บอกปัญหาได้เกือบทุกกรณี และไม่ใช่ความลับ — ตัดรหัสผ่านทิ้ง
           echo "→ $(printf '%s' "$SUPABASE_DB_URL" | sed -E 's#(//[^:]+:)[^@]+(@)#\1********\2#')"
 
+          # หน้า Connect ของ Supabase มีสตริงหลายแบบ สองแบบนี้หยิบผิดกันบ่อย
+          # แล้ว error ดิบของ psql ไม่ได้บอกว่าต้องแก้อะไร
+          case "$SUPABASE_DB_URL" in
+            *pgbouncer=true*)
+              echo "❌ นี่คือสตริงสำหรับ Prisma — psql ไม่รู้จัก ?pgbouncer=true"
+              echo "   ลบ '?pgbouncer=true' ท้ายสตริงออก แล้วเปลี่ยนพอร์ตเป็น 5432"
+              exit 1 ;;
+          esac
+          case "$SUPABASE_DB_URL" in
+            *:6543/*)
+              echo "❌ พอร์ต 6543 คือ transaction pooler ซึ่งรัน DDL ของ migration ไม่ได้"
+              echo "   เปลี่ยนเป็น 5432 (session pooler) host กับ user เหมือนเดิม"
+              exit 1 ;;
+          esac
+          case "$SUPABASE_DB_URL" in
+            *db.*.supabase.co*)
+              echo "❌ Direct connection เป็น IPv6 อย่างเดียว GitHub runner ต่อไม่ถึง"
+              echo "   ใช้ Session pooler (*.pooler.supabase.com:5432) แทน"
+              exit 1 ;;
+          esac
+
           psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc \
             "select 'ต่อติด: ' || current_user || '@' || current_database()
                     || ' | postgres ' || current_setting('server_version');"
