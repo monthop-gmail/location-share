@@ -331,6 +331,60 @@
       border-radius: 4px;
     }
 
+    /* Shared dialog (replaces prompt(), which LINE Browser may refuse) */
+    .dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .dialog-card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 320px;
+    }
+    .dialog-title {
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .dialog-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 16px;
+      margin-bottom: 8px;
+      background: white;
+    }
+    .dialog-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .dialog-actions button {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 15px;
+    }
+    .dialog-cancel {
+      border: 1px solid #ddd;
+      background: #f8f9fa;
+      color: #555;
+    }
+    .dialog-ok {
+      border: none;
+      color: white;
+    }
+
     .icon-picker {
       display: flex;
       gap: 8px;
@@ -442,6 +496,72 @@
       return `https://www.google.com/maps/dir/?api=1&destination=${la},${ln}`;
     }
 
+    // Name-entry dialog with an optional icon picker.
+    // Used instead of prompt(), which some in-app browsers (LINE included)
+    // silently refuse to display. Resolves to {name, icon} or null if cancelled.
+    function askForName({ title, placeholder, defaultValue = '', icons = null, accent = '#00BFA5' }) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        const iconRow = icons ? `
+          <div style="font-size:14px;color:#666;margin-bottom:4px;text-align:center;">เลือกไอคอน</div>
+          <div class="icon-picker">
+            ${icons.map(ic => `<span class="icon-option" data-icon="${ic}">${ic}</span>`).join('')}
+          </div>` : '';
+
+        overlay.innerHTML = `
+          <div class="dialog-card">
+            <div class="dialog-title">${escapeHtml(title)}</div>
+            <input type="text" class="dialog-input" placeholder="${escapeHtml(placeholder)}">
+            ${iconRow}
+            <div class="dialog-actions">
+              <button type="button" class="dialog-cancel">ยกเลิก</button>
+              <button type="button" class="dialog-ok" style="background:${accent};">บันทึก</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const input = overlay.querySelector('.dialog-input');
+        input.value = defaultValue;
+
+        const iconOptions = overlay.querySelectorAll('.icon-option');
+        if (iconOptions.length) {
+          iconOptions[0].classList.add('selected');
+          iconOptions.forEach(el => el.addEventListener('click', () => {
+            iconOptions.forEach(o => o.classList.remove('selected'));
+            el.classList.add('selected');
+          }));
+        }
+
+        function close(result) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(result);
+        }
+
+        function submit() {
+          const name = input.value.trim();
+          if (!name) { input.focus(); return; }   // empty name is not a save
+          const selected = overlay.querySelector('.icon-option.selected');
+          close({ name, icon: selected ? selected.dataset.icon : null });
+        }
+
+        function onKey(e) {
+          if (e.key === 'Escape') close(null);
+          else if (e.key === 'Enter' && document.activeElement === input) submit();
+        }
+
+        overlay.querySelector('.dialog-ok').addEventListener('click', submit);
+        overlay.querySelector('.dialog-cancel').addEventListener('click', () => close(null));
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
+        document.addEventListener('keydown', onKey);
+
+        input.focus();
+      });
+    }
+
     // Configuration - Replace with your own Supabase project details
     const SUPABASE_URL = 'https://kzfsndyatfzszhyuogbq.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6ZnNuZHlhdGZ6c3poeXVvZ2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMzQwMjksImV4cCI6MjA4NzYxMDAyOX0.Gl7v-x0LVq3BZtR_kPMxmSLvOTsJgynpO0eRHg3Ny4I';
@@ -522,9 +642,8 @@
     }
 
     if (!baseUserId) {
-      baseUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+      baseUserId = 'user_' + Math.random().toString(36).slice(2, 11);
       localStorage.setItem('user_id', baseUserId);
-    } else {
     }
 
     // The room now lives in its own column, so the id is stable across rooms.
@@ -657,10 +776,6 @@
         // alert('เลิกแชร์ตำแหน่งเรียบร้อยแล้ว'); // No need to alert, UI change is enough
       }
     }
-
-    // Remove old listeners as we use onclick in HTML now for cleaner toggle logic
-    // document.getElementById('shareBtn').addEventListener('click', shareLocation); 
-    // document.getElementById('stopBtn').addEventListener('click', stopSharing);
 
     // Clear all other markers and friend list
     function clearOtherMarkers() {
@@ -987,14 +1102,25 @@
         return;
       }
 
-      const name = prompt('ตั้งชื่อเส้นทาง:', `เส้นทาง ${routeData.length + 1}`) || `เส้นทาง ${routeData.length + 1}`;
+      const result = await askForName({
+        title: 'ตั้งชื่อเส้นทาง',
+        placeholder: 'ชื่อเส้นทาง...',
+        defaultValue: `เส้นทาง ${routeData.length + 1}`,
+        accent: '#F57C00'
+      });
+
+      if (!result) {
+        stopDrawMode();
+        return;
+      }
+
       const color = ROUTE_COLORS[routeData.length % ROUTE_COLORS.length];
 
       const { error } = await supabaseClient
         .from('routes')
         .insert({
           room: getRoom(),
-          name: name,
+          name: result.name.slice(0, 80),
           coordinates: latlngs,
           color: color,
           created_by: userId
@@ -1153,49 +1279,14 @@
     async function onPinClick(e) {
       const latlng = e.latlng;
 
-      // Icon picker dialog
-      const iconPickerHtml = PIN_ICONS.map((ic, i) =>
-        `<span class="icon-option" data-icon="${ic}" onclick="document.querySelectorAll('.icon-option').forEach(el=>el.classList.remove('selected'));this.classList.add('selected')">${ic}</span>`
-      ).join('');
-
-      const dialog = document.createElement('div');
-      dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
-      dialog.innerHTML = `
-        <div style="background:white;border-radius:16px;padding:24px;width:90%;max-width:320px;font-family:'Kanit',sans-serif;">
-          <div style="font-size:16px;font-weight:500;margin-bottom:12px;text-align:center;">ปักหมุดจุดหมาย</div>
-          <input type="text" id="pinNameInput" placeholder="ชื่อจุดหมาย..." style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:16px;font-family:'Kanit',sans-serif;margin-bottom:8px;">
-          <div style="font-size:14px;color:#666;margin-bottom:4px;text-align:center;">เลือกไอคอน</div>
-          <div class="icon-picker">${iconPickerHtml}</div>
-          <div style="display:flex;gap:10px;">
-            <button onclick="this.closest('div[style*=fixed]').dataset.result='cancel';this.closest('div[style*=fixed]').remove()" style="flex:1;padding:12px;border-radius:10px;border:1px solid #ddd;background:#f8f9fa;font-family:'Kanit',sans-serif;font-size:15px;cursor:pointer;">ยกเลิก</button>
-            <button onclick="this.closest('div[style*=fixed]').dataset.result='ok';this.closest('div[style*=fixed]').dispatchEvent(new Event('confirm'))" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#9C27B0,#7B1FA2);color:white;font-family:'Kanit',sans-serif;font-size:15px;cursor:pointer;">บันทึก</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(dialog);
-
-      // Select first icon by default
-      dialog.querySelector('.icon-option').classList.add('selected');
-      dialog.querySelector('#pinNameInput').focus();
-
-      // Wait for user action
-      const result = await new Promise(resolve => {
-        dialog.addEventListener('confirm', () => {
-          const name = dialog.querySelector('#pinNameInput').value.trim();
-          const selectedIcon = dialog.querySelector('.icon-option.selected');
-          const icon = selectedIcon ? selectedIcon.dataset.icon : '📍';
-          dialog.remove();
-          resolve({ name, icon });
-        });
-        dialog.addEventListener('click', (ev) => {
-          if (ev.target === dialog) {
-            dialog.remove();
-            resolve(null);
-          }
-        });
+      const result = await askForName({
+        title: 'ปักหมุดจุดหมาย',
+        placeholder: 'ชื่อจุดหมาย...',
+        icons: PIN_ICONS,
+        accent: '#9C27B0'
       });
 
-      if (!result || !result.name) {
+      if (!result) {
         stopPinMode();
         return;
       }
@@ -1204,7 +1295,7 @@
         .from('pins')
         .insert({
           room: getRoom(),
-          name: result.name,
+          name: result.name.slice(0, 80),
           lat: latlng.lat,
           lng: latlng.lng,
           icon: safeIcon(result.icon),
