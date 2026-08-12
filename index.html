@@ -581,6 +581,66 @@
       alert('Supabase init error: ' + e.message);
     }
 
+    // --- Anonymous identity ---
+    // Without a session every caller is the same `anon` role, so the database
+    // cannot tell one device's rows from another's and RLS can only be all or
+    // nothing. An anonymous sign-in costs the user nothing — no prompt, no
+    // account — but gives each device a real auth.uid() for policies to key on.
+    //
+    // Started here rather than awaited: reads are public, so the map can paint
+    // while this is in flight. Writers await sessionReady before touching a table.
+    let sessionReady = null;
+
+    async function ensureSession() {
+      if (!supabaseClient) return null;
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) return session;
+
+        const { data, error } = await supabaseClient.auth.signInAnonymously();
+        if (error) {
+          console.error('Anonymous sign-in failed:', error);
+          return null;
+        }
+        return data.session;
+      } catch (e) {
+        console.error('Anonymous sign-in threw:', e);
+        return null;
+      }
+    }
+
+    function isAuthError(error) {
+      if (!error) return false;
+      // 42501 is Postgres "insufficient privilege", which is what an RLS
+      // rejection looks like from the client side.
+      if (error.code === '42501' || error.code === 'PGRST301') return true;
+      const text = `${error.code || ''} ${error.message || ''}`.toLowerCase();
+      return text.includes('jwt')
+        || text.includes('row-level security')
+        || text.includes('not authenticated');
+    }
+
+    // Supabase can hand back a session that has expired, or whose anonymous user
+    // was purged. One silent re-auth and retry beats showing the user a
+    // row-level-security error they can do nothing about.
+    async function withSession(run) {
+      await sessionReady;
+      let result = await run();
+      if (isAuthError(result && result.error)) {
+        try { await supabaseClient.auth.signOut(); } catch (e) {}
+        if (await ensureSession()) result = await run();
+      }
+      return result;
+    }
+
+    // For writes that must not proceed without an identity at all.
+    async function requireSession() {
+      if (await sessionReady) return true;
+      if (await ensureSession()) return true;
+      alert('เชื่อมต่อระบบยืนยันตัวตนไม่สำเร็จ\nกรุณาโหลดหน้านี้ใหม่แล้วลองอีกครั้ง');
+      return false;
+    }
+
     // --- Group/Room from URL hash (supports Thai) ---
     const MAX_ROOM_LEN = 64;
 
@@ -675,10 +735,14 @@
 
     async function startSharing() {
       if (!supabaseClient) return alert('Supabase client not initialized');
-      
+
       const displayName = document.getElementById('displayName').value.trim();
       if (!displayName) return alert('กรุณาใส่ชื่อของคุณก่อนแชร์ตำแหน่ง');
       localStorage.setItem('display_name', displayName);
+
+      // Fail here, before the GPS prompt, rather than silently dropping every
+      // position update once watchPosition is running.
+      if (!await requireSession()) return;
 
       if (!navigator.geolocation) return alert('เบราว์เซอร์ไม่รองรับ Geolocation');
       
@@ -726,7 +790,7 @@
         }
 
         // Send to Supabase
-        const { error } = await supabaseClient
+        const { error } = await withSession(() => supabaseClient
           .from('locations')
           .upsert({
             user_id: userId,
@@ -734,7 +798,7 @@
             lat: latitude,
             lng: longitude,
             display_name: displayName
-          }, { onConflict: 'user_id,room' });
+          }, { onConflict: 'user_id,room' }));
 
         if (error) console.error('Upsert error:', error);
     }
@@ -760,11 +824,11 @@
       isSharing = false;
       updateShareButtonUI();
 
-      const { error } = await supabaseClient
+      const { error } = await withSession(() => supabaseClient
         .from('locations')
         .delete()
         .eq('user_id', userId)
-        .eq('room', getRoom());
+        .eq('room', getRoom()));
 
       if (error) {
         console.error('Stop share error:', error);
@@ -1116,7 +1180,7 @@
 
       const color = ROUTE_COLORS[routeData.length % ROUTE_COLORS.length];
 
-      const { error } = await supabaseClient
+      const { error } = await withSession(() => supabaseClient
         .from('routes')
         .insert({
           room: getRoom(),
@@ -1124,7 +1188,7 @@
           coordinates: latlngs,
           color: color,
           created_by: userId
-        });
+        }));
 
       if (error) {
         console.error('Save route error:', error);
@@ -1182,7 +1246,8 @@
 
     async function deleteRoute(id) {
       if (!confirm('ลบเส้นทางนี้?')) return;
-      const { error } = await supabaseClient.from('routes').delete().eq('id', id);
+      const { error } = await withSession(() =>
+        supabaseClient.from('routes').delete().eq('id', id));
       if (error) console.error('Delete route error:', error);
     }
 
@@ -1291,7 +1356,7 @@
         return;
       }
 
-      const { error } = await supabaseClient
+      const { error } = await withSession(() => supabaseClient
         .from('pins')
         .insert({
           room: getRoom(),
@@ -1300,7 +1365,7 @@
           lng: latlng.lng,
           icon: safeIcon(result.icon),
           created_by: userId
-        });
+        }));
 
       if (error) {
         console.error('Save pin error:', error);
@@ -1364,7 +1429,8 @@
 
     async function deletePin(id) {
       if (!confirm('ลบหมุดนี้?')) return;
-      const { error } = await supabaseClient.from('pins').delete().eq('id', id);
+      const { error } = await withSession(() =>
+        supabaseClient.from('pins').delete().eq('id', id));
       if (error) console.error('Delete pin error:', error);
     }
 
@@ -1437,6 +1503,11 @@
     // ===== Boot =====
     // Everything starts here, at the very bottom, so no init path can run
     // before the state it depends on has been declared.
+
+    // Kick off, do not await: reads are public, so the map paints immediately
+    // and only writers block on this.
+    sessionReady = ensureSession();
+
     try {
       subscribeToLocations();
     } catch (e) {
