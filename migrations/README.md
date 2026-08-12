@@ -27,8 +27,12 @@ docker run --rm --network container:pgtest -v "$PWD":/repo:ro \
 docker stop pgtest
 ```
 
-## ไฟล์ที่จงใจไม่อยู่ที่นี่
+## ไฟล์ที่มีเงื่อนไขต้องทำก่อน
 
-`docs/migrate-rls-owner.sql` ต้องเปิด Anonymous Sign-ins ใน Dashboard และต้อง
-deploy client ที่เรียก `signInAnonymously()` พร้อมกัน — ถ้ารันอัตโนมัติตอนที่ยัง
-ไม่ได้เปิด provider แอปจะเขียนข้อมูลไม่ได้เลย ดู `docs/SECURITY.md`
+`004_row_ownership.sql` อยู่ในโฟลเดอร์นี้และรันอัตโนมัติเหมือนตัวอื่น แต่จะทำงาน
+ถูกต้องก็ต่อเมื่อ **เปิด Anonymous Sign-ins ใน Dashboard แล้ว** และ **deploy client
+ที่เรียก `signInAnonymously()` ไปแล้ว** ทั้งสองอย่างทำเสร็จก่อน merge PR ที่พาไฟล์นี้
+เข้ามา — ลำดับนี้บังคับด้วยการแยกเป็นคนละ PR ไม่ใช่ด้วยโค้ด ดู `docs/SECURITY.md`
+
+ถ้า merge ก่อนครบเงื่อนไข client จะเขียนข้อมูลไม่ได้ (อ่านได้ปกติ) แก้ด้วยการ
+เปิด provider แล้วให้ผู้ใช้โหลดหน้าใหม่ ไม่ต้อง rollback database
