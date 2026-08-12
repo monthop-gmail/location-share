@@ -1,24 +1,35 @@
-# Cloudflare Pages applies every matching rule in order, so the catch-all goes
-# first and the more specific rules below override it.
+# Cloudflare Pages CONCATENATES values when several rules set the same header —
+# it does not let a later rule override an earlier one. A /* catch-all setting
+# Cache-Control therefore leaks into every specific rule below it, producing
+# "no-store, ..., max-age=31536000, immutable" and no caching at all.
+# So: security headers on /*, and Cache-Control only on non-overlapping paths.
 
-# Default: never serve a stale app shell. LINE Browser holds onto old copies
-# aggressively and users end up running last week's JavaScript.
 /*
-  Cache-Control: no-cache, no-store, must-revalidate
-  Pragma: no-cache
-  Expires: 0
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
-# The service worker controls what everyone else sees — it must never be stale.
+# The app shell must never be stale. LINE Browser holds onto old copies
+# aggressively and users end up running last week's JavaScript.
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
+/test-location.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# The service worker controls what everyone else sees — never serve it stale.
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
 
 # Icons never change without changing name, so let the browser keep them.
 /icons/*
   Cache-Control: public, max-age=31536000, immutable
-  Pragma: cache
 
 /manifest.json
   Cache-Control: public, max-age=86400
-  Pragma: cache
