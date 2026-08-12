@@ -37,6 +37,54 @@ jobs:
       - name: Smoke test
         run: node tests/smoke.js
 
+  # A wrong SUPABASE_DB_URL only shows up when deploy.yml tries to use it, which
+  # is after the merge. Catch it on the PR instead. Never prints the password.
+  db-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Verify the connection string reaches a migratable database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "❌ ไม่ได้ตั้ง secret SUPABASE_DB_URL — ดู docs/MIGRATE.md"
+            exit 1
+          fi
+
+          case "$SUPABASE_DB_URL" in
+            postgresql://*|postgres://*) ;;
+            *)
+              echo "❌ ต้องเป็น connection string ขึ้นต้น postgresql://"
+              echo "   ไม่ใช่ https://<ref>.supabase.co ซึ่งเป็น REST API คนละอันกัน"
+              exit 1 ;;
+          esac
+
+          # host/port/user บอกปัญหาได้เกือบทุกกรณี และไม่ใช่ความลับ — ตัดรหัสผ่านทิ้ง
+          echo "→ $(printf '%s' "$SUPABASE_DB_URL" | sed -E 's#(//[^:]+:)[^@]+(@)#\1********\2#')"
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc \
+            "select 'ต่อติด: ' || current_user || '@' || current_database()
+                    || ' | postgres ' || current_setting('server_version');"
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc \
+            "select 'ตารางที่เจอ: ' || coalesce(string_agg(tablename, ', ' order by tablename), '(ไม่มี)')
+             from pg_tables where schemaname = 'public';"
+
+          # migrations เป็น DDL ล้วน — พิสูจน์ว่า connection นี้รัน DDL ได้จริง
+          # ทำใน transaction แล้ว rollback จึงไม่ทิ้งอะไรไว้ใน database
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          CREATE TABLE _preflight_ddl_check (x int);
+          ROLLBACK;
+          SQL
+
+          echo "✅ connection string ใช้ได้ และรัน DDL ได้"
+
   # deploy.yml applies migrations/ to the live database on every push to main,
   # so rehearse them here first — against production's real starting schema.
   migrations:
