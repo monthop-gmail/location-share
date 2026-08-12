@@ -32,13 +32,34 @@ psql -c "
     ('user_bbb@ทริปเชียงใหม่', 18.80,  98.99, 'อีกคน');
 "
 
+# 001 is checked on its own: later migrations legitimately delete the rows it
+# backfills, so the backfill can only be observed here.
+echo "→ applying 001 and checking the backfill"
+psql -f migrations/001_rooms.sql
+
+check() {
+  local label="$1" sql="$2" got
+  got=$(command psql "$DATABASE_URL" -tAc "$sql")
+  if [ "$got" = "t" ]; then echo "   ✅ $label"; else echo "   ❌ $label (got '$got')"; exit 1; fi
+}
+
+check "old user_id@room split into user_id + room" \
+  "SELECT NOT EXISTS (SELECT 1 FROM public.locations WHERE user_id LIKE '%@%');"
+check "backfilled room values landed" \
+  "SELECT count(*) = 2 FROM public.locations WHERE room = 'ทริปเชียงใหม่';"
+check "same person kept both rooms" \
+  "SELECT count(*) = 2 FROM public.locations WHERE user_id = 'user_aaa';"
+
 for pass in 1 2; do
-  echo "→ applying migrations (pass $pass)"
+  echo "→ applying the full set (pass $pass)"
   for f in migrations/*.sql; do
     echo "   $f"
     psql -f "$f"
   done
 done
+
+check "004 cleared locations that predate ownership" \
+  "SELECT NOT EXISTS (SELECT 1 FROM public.locations WHERE owner IS NULL);"
 
 echo "→ asserting end state"
 assert() {
@@ -57,15 +78,6 @@ assert "locations.room exists" "
   SELECT EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_name='locations' AND column_name='room');"
 
-assert "old user_id@room split into user_id + room" "
-  SELECT NOT EXISTS (SELECT 1 FROM public.locations WHERE user_id LIKE '%@%');"
-
-assert "backfilled room values landed" "
-  SELECT count(*) = 2 FROM public.locations WHERE room = 'ทริปเชียงใหม่';"
-
-assert "same person kept both rooms" "
-  SELECT count(*) = 2 FROM public.locations WHERE user_id = 'user_aaa';"
-
 assert "unique moved to (user_id, room)" "
   SELECT EXISTS (SELECT 1 FROM pg_indexes
                  WHERE tablename='locations' AND indexname='locations_user_id_room_key');"
@@ -83,6 +95,11 @@ assert "validation constraints present" "
 
 assert "cleanup function exists" "
   SELECT to_regprocedure('delete_expired_locations()') IS NOT NULL;"
+
+assert "owner columns exist on all three tables" "
+  SELECT count(*) = 3 FROM information_schema.columns
+  WHERE table_schema='public' AND column_name='owner'
+    AND table_name IN ('locations','routes','pins');"
 
 # The constraints must actually bite — this is the XSS hole they close
 echo "→ checking constraints reject bad rows"
@@ -118,4 +135,83 @@ psql -c "
 echo "   ✅ normal pin accepted"
 
 echo
-echo "✅ migrations verified end to end"
+
+
+# ===== RLS: prove the policies actually separate one device from another =====
+# The whole point of 004 is that holding the anon key is no longer enough to
+# touch someone else's row. Assert that against real policies, as the real
+# roles — postgres bypasses RLS, so every check below runs SET ROLE first.
+echo "→ checking row ownership policies"
+
+A='11111111-1111-4111-8111-111111111111'
+B='22222222-2222-4222-8222-222222222222'
+
+# -q matters: without it psql prints BEGIN/SET/DELETE/COMMIT status lines and
+# "tail -1" picks up COMMIT instead of the value the caller wants.
+as_user() { # as_user <uuid> <sql>
+  command psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tAq <<SQL
+BEGIN;
+SELECT set_config('request.jwt.claim.sub', '$1', true);
+SET LOCAL ROLE authenticated;
+$2
+COMMIT;
+SQL
+}
+
+as_anon() { # as_anon <sql> — no JWT at all, i.e. someone with just the key
+  command psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -tAq <<SQL
+BEGIN;
+SET LOCAL ROLE anon;
+$1
+COMMIT;
+SQL
+}
+
+# A and B each share a location
+as_user "$A" "INSERT INTO public.locations (user_id, room, lat, lng, display_name)
+               VALUES ('dev_a', 'main', 13.75, 100.50, 'A');" >/dev/null
+as_user "$B" "INSERT INTO public.locations (user_id, room, lat, lng, display_name)
+               VALUES ('dev_b', 'main', 13.76, 100.51, 'B');" >/dev/null
+echo "   ✅ signed-in devices can share their own location"
+
+owner_a=$(command psql "$DATABASE_URL" -tAc "SELECT owner FROM public.locations WHERE user_id='dev_a';")
+[ "$owner_a" = "$A" ] || { echo "   ❌ owner was not stamped from the JWT (got '$owner_a')"; exit 1; }
+echo "   ✅ owner stamped from the JWT, not from the client"
+
+# B tries to delete A's location
+deleted=$(as_user "$B" "DELETE FROM public.locations WHERE user_id='dev_a';
+                        SELECT count(*) FROM public.locations WHERE user_id='dev_a';" | tail -1)
+[ "$deleted" = "1" ] || { echo "   ❌ another device deleted A's location"; exit 1; }
+echo "   ✅ one device cannot delete another's location"
+
+# B tries to move A's location somewhere else
+moved=$(as_user "$B" "UPDATE public.locations SET lat=0.1, lng=90.1 WHERE user_id='dev_a';
+                      SELECT lat FROM public.locations WHERE user_id='dev_a';" | tail -1)
+case "$moved" in 13.75*) echo "   ✅ one device cannot move another's location";;
+  *) echo "   ❌ another device moved A's location (lat=$moved)"; exit 1;; esac
+
+# Someone with only the anon key, no session
+if as_anon "INSERT INTO public.locations (user_id, room, lat, lng)
+            VALUES ('dev_key_only', 'main', 13.7, 100.5);" >/dev/null 2>&1; then
+  echo "   ❌ a keyholder with no session still inserted a location"; exit 1
+fi
+echo "   ✅ the anon key alone can no longer write"
+
+wiped=$(as_anon "DELETE FROM public.locations;
+                 SELECT count(*) FROM public.locations;" 2>/dev/null | tail -1)
+[ "$wiped" = "2" ] || { echo "   ❌ the anon key alone wiped the table (left '$wiped')"; exit 1; }
+echo "   ✅ the anon key alone can no longer delete"
+
+# Reads must stay open or Realtime goes silent — that is a deliberate trade-off
+visible=$(as_anon "SELECT count(*) FROM public.locations;" | tail -1)
+[ "$visible" = "2" ] || { echo "   ❌ anon lost SELECT — realtime would go silent"; exit 1; }
+echo "   ✅ anon can still read (required by realtime)"
+
+# A can still manage its own row
+own=$(as_user "$A" "DELETE FROM public.locations WHERE user_id='dev_a';
+                    SELECT count(*) FROM public.locations WHERE user_id='dev_a';" | tail -1)
+[ "$own" = "0" ] || { echo "   ❌ a device could not delete its own location"; exit 1; }
+echo "   ✅ a device can still delete its own location"
+
+echo
+echo "✅ row ownership verified"

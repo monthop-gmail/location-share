@@ -113,3 +113,28 @@ CREATE POLICY "Anyone can insert pins" ON public.pins
 DROP POLICY IF EXISTS "Anyone can delete pins" ON public.pins;
 CREATE POLICY "Anyone can delete pins" ON public.pins
     FOR DELETE USING (true);
+
+-- ===== Test-only shims =====
+-- Supabase ให้ schema auth และ role anon/authenticated มาเอง แต่ Postgres เปล่าไม่มี
+-- จำลองให้เหมือนพอที่จะทดสอบ RLS policy ได้จริง ไม่ได้ใช้กับโปรเจกต์จริง
+CREATE SCHEMA IF NOT EXISTS auth;
+
+-- นิยามเดียวกับของ Supabase: อ่าน sub จาก JWT claim ที่ PostgREST ตั้งไว้
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid
+LANGUAGE sql STABLE AS $$
+  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+END $$;
+
+GRANT USAGE ON SCHEMA public, auth TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;

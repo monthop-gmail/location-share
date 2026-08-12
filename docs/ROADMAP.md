@@ -89,8 +89,8 @@ PWA แชร์ตำแหน่งแบบเรียลไทม์สำ�
 ## Open Issues
 
 - [#3 Stricter RLS Policies](https://github.com/monthop-gmail/location-share/issues/3)
-  — SQL พร้อมรันอยู่ที่ [migrate-rls-owner.sql](migrate-rls-owner.sql) แล้ว
-  รอตัดสินใจเรื่องเปิด Anonymous Sign-ins ดู [SECURITY.md](SECURITY.md)
+  — ปิดฝั่งเขียนแล้วด้วย anonymous sign-ins + [`004_row_ownership.sql`](../migrations/004_row_ownership.sql)
+  ส่วนการอ่านข้ามห้องยังต้องรอ `room_members` ดู [SECURITY.md](SECURITY.md)
 - [#8 Import GPS (SinoTrack CSV/GPX)](https://github.com/monthop-gmail/location-share/issues/8)
 - [#9 Branch markers from API](https://github.com/monthop-gmail/location-share/issues/9)
 

@@ -115,15 +115,25 @@ client ใหม่ upsert ด้วย `onConflict: 'user_id,room'` จึง�
 
 ตรวจผลด้วย `SELECT jobname, schedule, active FROM cron.job;`
 
-## Migration 7: ผูกแถวกับเจ้าของ (issue #3) — **รันเอง**
+## Migration 7: ผูกแถวกับเจ้าของ (issue #3) — อัตโนมัติ แต่มีเงื่อนไข
 
-ไฟล์: [`migrate-rls-owner.sql`](migrate-rls-owner.sql) — จงใจไม่อยู่ใน `migrations/`
+ไฟล์: [`migrations/004_row_ownership.sql`](../migrations/004_row_ownership.sql)
 
-ปิดช่อง "ใครมี anon key ก็ลบข้อมูลคนอื่นได้" แต่ต้องเปิด Anonymous Sign-ins
-ใน Dashboard และต้อง deploy client ที่เรียก `signInAnonymously()` พร้อมกัน
-ถ้ามันรันอัตโนมัติตอนที่ยังไม่ได้เปิด provider แอปจะเขียนข้อมูลไม่ได้เลย
+ปิดช่อง "ใครมี anon key ก็ลบข้อมูลคนอื่นได้" โดยผูกทุกแถวกับ `auth.uid()`
 
-อ่าน [SECURITY.md](SECURITY.md) ให้ครบก่อนตัดสินใจ — มีข้อแลกเปลี่ยนที่ต้องรับทราบ
+**ต้องครบสองอย่างนี้ก่อน merge:**
+
+1. เปิด Anonymous Sign-ins แล้ว (Authentication → Providers)
+2. deploy client ที่เรียก `signInAnonymously()` ไปแล้ว
+
+ลำดับนี้บังคับด้วยการแยกเป็นคนละ PR ไม่ใช่ด้วยโค้ด
+
+> ⚠️ migration นี้ **ลบทุกแถวใน `locations` ที่ `owner IS NULL`** คือตำแหน่งทั้งหมด
+> ที่แชร์อยู่ก่อนหน้า เพราะแถวพวกนั้นจะไม่มีใครแก้ได้อีกและเจ้าของตัวจริงจะ upsert
+> ทับไม่ได้ ตำแหน่งหมดอายุใน 15 นาทีอยู่แล้ว ผู้ใช้แค่กดแชร์ใหม่
+> ส่วน `routes`/`pins` ไม่ถูกลบ
+
+อ่าน [SECURITY.md](SECURITY.md) ให้ครบก่อน — มีข้อแลกเปลี่ยนที่ต้องรับทราบ
 
 ---
 
@@ -134,7 +144,5 @@ push เข้า main
    └─ job: migrate   รัน migrations/*.sql ตามลำดับชื่อไฟล์
         └─ job: deploy   (needs: migrate)  wrangler pages deploy
 ```
-
-รันเองเมื่อพร้อม: `docs/migrate-rls-owner.sql`
 
 Schema ทั้งหมดดู [db_schema.sql](db_schema.sql)
