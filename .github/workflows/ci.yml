@@ -11,18 +11,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Check PR has linked issue
+        if: github.event_name == 'pull_request'
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            PR_NUMBER=$(echo $GITHUB_REF | sed "s|refs/pull/\([0-9]*\)/merge|\1|")
-            LINKED_ISSUE=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq ".body" | grep -oE "#[0-9]+" | head -1)
-            if [ -z "$LINKED_ISSUE" ]; then
-              echo "❌ PR must link to an issue (e.g., closes #123)"
-              exit 1
-            fi
-            echo "✅ Linked issue found: $LINKED_ISSUE"
+          LINKED_ISSUE=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} --jq ".body" | grep -oE "#[0-9]+" | head -1)
+          if [ -z "$LINKED_ISSUE" ]; then
+            echo "❌ PR must link to an issue (e.g., closes #123)"
+            exit 1
           fi
+          echo "✅ Linked issue found: $LINKED_ISSUE"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Hello world
-        run: echo "CI passed!"
+
+      - name: Validate JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('✅ manifest.json is valid')"
+
+      - name: Check service worker syntax
+        run: node --check sw.js && echo "✅ sw.js parses"
+
+      - name: Smoke test
+        run: node tests/smoke.js
