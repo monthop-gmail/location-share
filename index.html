@@ -399,6 +399,32 @@
       return div.innerHTML;
     }
 
+    // --- Allowlists (single source of truth) ---
+    const PIN_ICONS = ['📍', '🏁', '☕', '⛽', '🅿️', '🏨'];
+    const ROUTE_COLORS = ['#3388ff', '#FF5252', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4'];
+
+    // Rows can be INSERTed by anyone holding the anon key, so never trust
+    // icon/color/lat/lng straight from the DB — allowlist them at render time.
+    function safeIcon(icon) {
+      return PIN_ICONS.includes(icon) ? icon : '📍';
+    }
+
+    function safeColor(color) {
+      return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#3388ff';
+    }
+
+    function safeCoord(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    // Returns a Google Maps directions URL, or null if the coords are junk.
+    function navUrl(lat, lng) {
+      const la = safeCoord(lat), ln = safeCoord(lng);
+      if (la === null || ln === null) return null;
+      return `https://www.google.com/maps/dir/?api=1&destination=${la},${ln}`;
+    }
+
     // Configuration - Replace with your own Supabase project details
     const SUPABASE_URL = 'https://kzfsndyatfzszhyuogbq.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6ZnNuZHlhdGZ6c3poeXVvZ2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIwMzQwMjksImV4cCI6MjA4NzYxMDAyOX0.Gl7v-x0LVq3BZtR_kPMxmSLvOTsJgynpO0eRHg3Ny4I';
@@ -732,8 +758,9 @@
 
         // Navigation button inside friend item
         const navBtn = document.createElement('a');
-        navBtn.href = `https://www.google.com/maps/dir/?api=1&destination=${friend.lat},${friend.lng}`;
+        navBtn.href = navUrl(friend.lat, friend.lng) || '#';
         navBtn.target = '_blank';
+        navBtn.rel = 'noopener noreferrer';
         navBtn.innerHTML = '🚗';
         navBtn.style.cssText = 'padding: 8px; font-size: 20px; text-decoration: none;';
         navBtn.onclick = (e) => e.stopPropagation();
@@ -777,7 +804,9 @@
 
     // Geographic boundary: Thailand + nearby (lat 0-25, lng 90-115)
     function isInBounds(loc) {
-      return loc.lat >= 0 && loc.lat <= 25 && loc.lng >= 90 && loc.lng <= 115;
+      const lat = safeCoord(loc.lat), lng = safeCoord(loc.lng);
+      if (lat === null || lng === null) return false;
+      return lat >= 0 && lat <= 25 && lng >= 90 && lng <= 115;
     }
 
     function updateMarker(loc) {
@@ -815,7 +844,7 @@
           <b>${displayName}</b> ${statusBadge}<br>
           <span style="font-size:12px;color:#666;">อัปเดต: ${new Date(loc.updated_at).toLocaleTimeString('th-TH')}</span>
           <br>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank"
+          <a href="${navUrl(loc.lat, loc.lng)}" target="_blank" rel="noopener noreferrer"
              style="display:inline-block; margin-top:8px; padding:6px 12px; background:#4285F4; color:white; text-decoration:none; border-radius:4px; font-size:14px;">
             🚗 นำทางไปหา
           </a>
@@ -839,7 +868,6 @@
     let drawHandler = null;
     let routeChannel = null;
     let routeData = [];
-    const ROUTE_COLORS = ['#3388ff', '#FF5252', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4'];
 
     function toggleDrawMode() {
       if (isDrawing) {
@@ -917,11 +945,18 @@
 
     function renderRoute(route) {
       if (drawnRoutes[route.id]) {
+        // delete too, not just remove — the early return below would otherwise
+        // leave a detached layer in the map that the route list still links to
         drawnRoutes[route.id].remove();
+        delete drawnRoutes[route.id];
       }
-      const coords = route.coordinates.map(c => [c[0], c[1]]);
+      // coordinates is untrusted JSONB — drop anything that isn't a [lat,lng] pair
+      const coords = (Array.isArray(route.coordinates) ? route.coordinates : [])
+        .map(c => Array.isArray(c) ? [safeCoord(c[0]), safeCoord(c[1])] : null)
+        .filter(c => c && c[0] !== null && c[1] !== null);
+      if (coords.length < 2) return;
       const polyline = L.polyline(coords, {
-        color: route.color || '#3388ff',
+        color: safeColor(route.color),
         weight: 4,
         opacity: 0.8
       }).addTo(map);
@@ -980,7 +1015,7 @@
         };
         item.innerHTML = `
           <div class="route-item-info">
-            <div class="route-color" style="background:${route.color || '#3388ff'}"></div>
+            <div class="route-color" style="background:${safeColor(route.color)}"></div>
             <span class="route-name">${escapeHtml(route.name || 'เส้นทาง')}</span>
           </div>
         `;
@@ -1022,11 +1057,10 @@
     }
 
     // ===== Destination Pins =====
-    var drawnPins = {};
-    var isPinning = false;
-    var pinChannel = null;
-    var pinData = [];
-    const PIN_ICONS = ['📍', '🏁', '☕', '⛽', '🅿️', '🏨'];
+    let drawnPins = {};
+    let isPinning = false;
+    let pinChannel = null;
+    let pinData = [];
 
     function togglePinMode() {
       if (isPinning) {
@@ -1111,7 +1145,7 @@
           name: result.name,
           lat: latlng.lat,
           lng: latlng.lng,
-          icon: result.icon,
+          icon: safeIcon(result.icon),
           created_by: userId
         });
 
@@ -1126,21 +1160,27 @@
     function renderPin(pin) {
       if (drawnPins[pin.id]) {
         drawnPins[pin.id].remove();
+        delete drawnPins[pin.id];
       }
+      const lat = safeCoord(pin.lat), lng = safeCoord(pin.lng);
+      if (lat === null || lng === null) return;
+
+      const pinIcon = safeIcon(pin.icon);
       const icon = L.divIcon({
-        html: `<div style="font-size:28px;text-align:center;line-height:1;">${pin.icon || '📍'}</div>`,
+        html: `<div style="font-size:28px;text-align:center;line-height:1;">${pinIcon}</div>`,
         className: '',
         iconSize: [32, 32],
         iconAnchor: [16, 28],
         popupAnchor: [0, -28]
       });
-      const marker = L.marker([pin.lat, pin.lng], { icon: icon }).addTo(map);
+      const marker = L.marker([lat, lng], { icon: icon }).addTo(map);
+      const url = navUrl(lat, lng);
       marker.bindPopup(`
         <div style="text-align:center;font-family:'Kanit',sans-serif;">
-          <div style="font-size:24px;">${pin.icon || '📍'}</div>
+          <div style="font-size:24px;">${pinIcon}</div>
           <b>${escapeHtml(pin.name)}</b>
           <br>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank"
+          <a href="${url}" target="_blank" rel="noopener noreferrer"
              style="display:inline-block;margin-top:8px;padding:6px 12px;background:#9C27B0;color:white;text-decoration:none;border-radius:4px;font-size:14px;">
             🚗 นำทางไปจุดหมาย
           </a>
@@ -1200,13 +1240,14 @@
         };
         item.innerHTML = `
           <div class="pin-item-info">
-            <span class="pin-icon">${pin.icon || '📍'}</span>
+            <span class="pin-icon">${safeIcon(pin.icon)}</span>
             <span class="pin-name">${escapeHtml(pin.name)}</span>
           </div>
         `;
         const navBtn = document.createElement('a');
-        navBtn.href = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+        navBtn.href = navUrl(pin.lat, pin.lng) || '#';
         navBtn.target = '_blank';
+        navBtn.rel = 'noopener noreferrer';
         navBtn.className = 'pin-nav';
         navBtn.innerHTML = '🚗';
         navBtn.onclick = (e) => e.stopPropagation();
