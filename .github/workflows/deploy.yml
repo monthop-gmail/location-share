@@ -5,8 +5,48 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Two deploys running at once could interleave migrations with the wrong build.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
 jobs:
+  # Schema first, always. The client cannot upsert until (user_id, room) exists,
+  # so a deploy that ran before its migration would take the app down.
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Apply migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "❌ ไม่ได้ตั้ง secret SUPABASE_DB_URL"
+            echo
+            echo "หาได้จาก Supabase Dashboard → Project Settings → Database"
+            echo "→ Connection string → URI (ใช้ session pooler พอร์ต 5432)"
+            echo "แล้วเพิ่มที่ Settings → Secrets and variables → Actions"
+            echo
+            echo "จงใจให้ล้มตรงนี้ ดีกว่าปล่อย deploy ทับ schema เก่า"
+            exit 1
+          fi
+
+          # ทุกไฟล์ใน migrations/ เขียนให้รันซ้ำได้ จึงรันทั้งหมดทุกครั้ง
+          # ไฟล์ที่ต้องตัดสินใจเองไม่ได้อยู่ในนี้ (ดู docs/migrate-rls-owner.sql)
+          for f in migrations/*.sql; do
+            echo "→ $f"
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+          echo "✅ migrations applied"
+
   deploy:
+    needs: migrate
     runs-on: ubuntu-latest
     permissions:
       contents: read

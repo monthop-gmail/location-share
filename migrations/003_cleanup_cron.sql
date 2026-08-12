@@ -2,13 +2,10 @@
 --
 -- db_schema.sql มี delete_expired_locations() มาตั้งแต่แรก และ trigger ก็ตั้ง
 -- expires_at = NOW() + 15 นาที ให้ทุกแถว — แต่ไม่มีอะไรเรียกฟังก์ชันนั้นเลย
--- ตาราง locations จึงโตขึ้นเรื่อยๆ และทุกเครื่องต้องดาวน์โหลดแถวที่ตายแล้วทุก 10 วินาที
+-- ตาราง locations จึงโตขึ้นเรื่อยๆ
 --
 -- รันซ้ำได้ ไม่มีผลข้างเคียง
 
-BEGIN;
-
--- เผื่อกรณียังไม่เคยรัน db_schema.sql เวอร์ชันล่าสุด
 CREATE OR REPLACE FUNCTION delete_expired_locations()
 RETURNS void AS $$
 BEGIN
@@ -16,28 +13,34 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- routes/pins ไม่มี expires_at เพราะตั้งใจให้อยู่ถาวรต่อห้อง
--- ถ้าอยากให้หายเองด้วย ให้ปลดคอมเมนต์บล็อกท้ายไฟล์
+-- การตั้ง schedule ห่อไว้ทั้งหมด เพราะ migration ชุดนี้รันอัตโนมัติจาก CI
+-- ถ้าโปรเจกต์ไหนเปิด pg_cron ไม่ได้ ต้องเตือนแล้วผ่านไป ไม่ใช่ทำให้ deploy ล้ม
+DO $$
+BEGIN
+  BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_cron;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'pg_cron ใช้ไม่ได้ (%) — ข้ามการตั้ง schedule, ต้องตั้ง cleanup เอง', SQLERRM;
+    RETURN;
+  END;
 
-COMMIT;
+  IF to_regprocedure('cron.schedule(text,text,text)') IS NULL THEN
+    RAISE WARNING 'ไม่พบ cron.schedule — ข้ามการตั้ง schedule, ต้องตั้ง cleanup เอง';
+    RETURN;
+  END IF;
 
--- ===== ตั้ง schedule =====
--- pg_cron มีให้ใช้ในทุก Supabase project แต่ต้องเปิด extension ก่อน
--- (Dashboard → Database → Extensions → เปิด "pg_cron" หรือรันบรรทัดล่างนี้)
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+  -- ลบ job เดิมก่อน เพื่อให้รันไฟล์นี้ซ้ำได้
+  PERFORM cron.unschedule('delete-expired-locations')
+  FROM cron.job WHERE jobname = 'delete-expired-locations';
 
--- ลบ job เดิมก่อนถ้ามี เพื่อให้รันไฟล์ซ้ำได้
-SELECT cron.unschedule('delete-expired-locations')
-WHERE EXISTS (
-  SELECT 1 FROM cron.job WHERE jobname = 'delete-expired-locations'
-);
+  PERFORM cron.schedule(
+    'delete-expired-locations',
+    '*/5 * * * *',
+    'SELECT delete_expired_locations();'
+  );
 
--- ทุก 5 นาที
-SELECT cron.schedule(
-  'delete-expired-locations',
-  '*/5 * * * *',
-  $$ SELECT delete_expired_locations(); $$
-);
+  RAISE NOTICE 'ตั้ง cron delete-expired-locations ทุก 5 นาทีเรียบร้อย';
+END $$;
 
 -- ตรวจว่าตั้งสำเร็จไหม:
 --   SELECT jobname, schedule, active FROM cron.job;
@@ -49,8 +52,7 @@ SELECT cron.schedule(
 -- ใช้ Supabase Edge Function + Cron trigger เรียก RPC นี้แทน:
 --   GRANT EXECUTE ON FUNCTION delete_expired_locations() TO anon;
 -- แล้วยิง POST https://<project>.supabase.co/rest/v1/rpc/delete_expired_locations
--- หมายเหตุ: การ GRANT ให้ anon แปลว่าใครก็สั่งลบแถวที่หมดอายุได้
--- ซึ่งไม่อันตราย เพราะลบเฉพาะแถวที่ expires_at < NOW() อยู่แล้ว
+-- การ GRANT ให้ anon ไม่อันตราย เพราะลบเฉพาะแถวที่ expires_at < NOW() อยู่แล้ว
 
 
 -- ===== ทางเลือก: ให้ routes/pins หมดอายุด้วย =====
@@ -58,7 +60,3 @@ SELECT cron.schedule(
 --   DEFAULT (NOW() + INTERVAL '30 days');
 -- ALTER TABLE public.pins ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
 --   DEFAULT (NOW() + INTERVAL '30 days');
--- SELECT cron.schedule('delete-expired-map-data', '0 3 * * *', $$
---   DELETE FROM public.routes WHERE expires_at < NOW();
---   DELETE FROM public.pins   WHERE expires_at < NOW();
--- $$);

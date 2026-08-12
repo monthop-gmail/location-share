@@ -36,3 +36,31 @@ jobs:
 
       - name: Smoke test
         run: node tests/smoke.js
+
+  # deploy.yml applies migrations/ to the live database on every push to main,
+  # so rehearse them here first — against production's real starting schema.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Rehearse migrations
+        run: tests/migrations.sh
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb

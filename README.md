@@ -36,17 +36,21 @@ cd location-share
 
 ## Database Setup
 
+`migrations/*.sql` รันอัตโนมัติก่อน deploy ทุกครั้งที่ push เข้า `main`
+ต้องตั้ง secret `SUPABASE_DB_URL` ก่อน ไม่งั้น deploy จะล้ม — ดู [MIGRATE.md](docs/MIGRATE.md)
+
 ตั้งใหม่จากศูนย์ → [db_schema.sql](docs/db_schema.sql)
-โปรเจกต์ที่มีข้อมูลอยู่แล้ว → [MIGRATE.md](docs/MIGRATE.md) (มี migration ที่ **ต้องรันก่อน deploy**)
 
 ## Tests
 
 ```bash
-node tests/smoke.js
+node tests/smoke.js       # inline script ของ index.html บน browser stub
+tests/migrations.sh       # ต้องมี DATABASE_URL ชี้ไป Postgres ที่ทิ้งได้
 ```
 
-รัน inline script ของ `index.html` บน browser stub เพื่อจับ error ตอน init
-และตรวจว่าค่าจาก database ไม่หลุดเข้า DOM แบบไม่ผ่านการกรอง — CI รันให้ทุก push
+`smoke.js` จับ error ตอน init และตรวจว่าค่าจาก database ไม่หลุดเข้า DOM แบบไม่กรอง
+`migrations.sh` โหลด schema แบบที่ production เป็นอยู่ แล้วรัน `migrations/` สองรอบ
+เพื่อพิสูจน์ว่ารันซ้ำได้ — CI รันทั้งคู่ให้ทุก push
 
 ## Security
 

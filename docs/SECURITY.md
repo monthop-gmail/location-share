@@ -29,13 +29,13 @@
 | ชั้น | วิธี |
 |---|---|
 | ตอน render | `safeIcon()` allowlist จาก `PIN_ICONS`, `safeColor()` บังคับ `#rrggbb`, `safeCoord()` บังคับตัวเลข |
-| ตอนเขียนลง DB | CHECK constraint ใน [`migrate-validation.sql`](migrate-validation.sql) — `icon` ยาวไม่เกิน 8 ตัวและห้ามมี `< > & " '` |
+| ตอนเขียนลง DB | CHECK constraint ใน [`migrations/002_validation.sql`](../migrations/002_validation.sql) — `icon` ยาวไม่เกิน 8 ตัวและห้ามมี `< > & " '` |
 
 ชั้น render อย่างเดียวก็พอกัน XSS แล้ว ส่วน constraint มีไว้ไม่ให้ข้อมูลขยะเข้าตารางตั้งแต่แรก
 
 ### ข้อมูลขยะและพิกัดนอกโลก
 
-`migrate-validation.sql` บังคับ lat/lng ให้อยู่ในกรอบเดียวกับ `isInBounds()`,
+`migrations/002_validation.sql` บังคับ lat/lng ให้อยู่ในกรอบเดียวกับ `isInBounds()`,
 จำกัดความยาวชื่อ/ชื่อห้อง, และบังคับให้ `routes.coordinates` เป็น array ของจุด 2–1000 จุด
 ทั้งหมดใช้ `NOT VALID` จึงบังคับเฉพาะแถวใหม่ ไม่ไปล้มเพราะข้อมูลเดิม
 
@@ -43,7 +43,7 @@
 
 เดิม client ยิง `.select('*')` เอาทุกแถวของทุกห้องมาแล้วค่อยกรองเอง
 ตอนนี้ `room` เป็นคอลัมน์จริงและ query กรองที่ DB แล้ว
-([`migrate-rooms.sql`](migrate-rooms.sql)) — เครื่องแต่ละเครื่องจึงได้เฉพาะห้องตัวเอง
+([`migrations/001_rooms.sql`](../migrations/001_rooms.sql)) — เครื่องแต่ละเครื่องจึงได้เฉพาะห้องตัวเอง
 
 **แต่นี่แก้เรื่องปริมาณข้อมูล ไม่ใช่เรื่องสิทธิ์** อ่านหัวข้อถัดไป
 
