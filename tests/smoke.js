@@ -129,6 +129,8 @@ try {
 }
 
 // Exercise the room parser + sanitizers directly
+const ago = (ms) => sandbox.isRecent({ updated_at: new Date(Date.now() - ms).toISOString() });
+
 const checks = [
   ['getRoom strips @', () => sandbox.getRoom() === 'ทริปเชียงใหม่'],
   ['safeIcon allows known', () => sandbox.safeIcon('🏁') === '🏁'],
@@ -142,11 +144,15 @@ const checks = [
   ['isInBounds accepts BKK', () => sandbox.isInBounds({ lat: 13.75, lng: 100.5 }) === true],
   ['isRecent rejects old', () => sandbox.isRecent({ updated_at: '2020-01-01T00:00:00Z' }) === false],
   ['isRecent accepts now', () => sandbox.isRecent({ updated_at: new Date().toISOString() }) === true],
-  ['isRecent survives midnight', () => {
-    const d = new Date(); d.setHours(0, 5, 0, 0);           // 00:05 today
-    const earlier = new Date(d.getTime() - 10 * 60 * 1000); // 23:55 yesterday
-    return sandbox.isRecent({ updated_at: earlier.toISOString() }) === true;
-  }],
+  ['isRecent rejects an unparseable timestamp', () => sandbox.isRecent({ updated_at: 'not a date' }) === false],
+
+  // The midnight bug was isToday() keying off the calendar date in Asia/Bangkok,
+  // so 23:59 vanished at 00:00. These pin the replacement to elapsed time and
+  // nothing else — which is what makes the calendar boundary irrelevant. Written
+  // as fixed offsets from now so the result cannot depend on the hour CI runs at.
+  ['isRecent keeps a row from 10 minutes ago', () => ago(10 * 60 * 1000) === true],
+  ['isRecent keeps a row from 11h59m ago', () => ago(11 * 3600e3 + 59 * 60e3) === true],
+  ['isRecent drops a row from 12h01m ago', () => ago(12 * 3600e3 + 60e3) === false],
   ['shouldShow rejects other room', () => sandbox.shouldShow({
     user_id: 'someone', room: 'อื่น', lat: 13.75, lng: 100.5, updated_at: new Date().toISOString(),
   }) === false],
