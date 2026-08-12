@@ -696,15 +696,35 @@
           .subscribe();
       }
 
-      // Auto-refresh every 10 seconds (only once)
-      if (!refreshInterval) {
-        refreshInterval = setInterval(() => {
-          fetchLocations(false);
-        }, 10000);
-      }
+      startPolling();
     }
 
-    // Handle room change
+    const POLL_INTERVAL_MS = 10000;
+
+    function startPolling() {
+      if (refreshInterval) return;
+      refreshInterval = setInterval(() => fetchLocations(false), POLL_INTERVAL_MS);
+    }
+
+    function stopPolling() {
+      if (!refreshInterval) return;
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+
+    // No point polling a screen nobody is looking at — this runs on phones that
+    // are already busy holding a GPS lock.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        fetchLocations(false); // catch up on whatever we missed
+        startPolling();
+      }
+    });
+
+    // Handle room change — friends, routes and pins are all room-scoped,
+    // so wipe the map and refetch everything for the new room.
     window.addEventListener('hashchange', () => {
       updateRoomTitle();
       clearOtherMarkers();
