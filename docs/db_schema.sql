@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS public.locations (
     lat FLOAT8 NOT NULL,
     lng FLOAT8 NOT NULL,
     display_name TEXT,
+    is_sharing BOOLEAN NOT NULL DEFAULT TRUE,
+    owner UUID DEFAULT auth.uid(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at TIMESTAMPTZ -- ตั้งโดย trigger ด้านล่าง
 );
@@ -24,13 +26,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS locations_user_id_room_key
 
 CREATE INDEX IF NOT EXISTS locations_room_updated_idx
     ON public.locations (room, updated_at DESC);
+CREATE INDEX IF NOT EXISTS locations_room_sharing_idx
+    ON public.locations (room, is_sharing);
 
 -- updated_at/expires_at ต้องมาจากนาฬิกา server ไม่ใช่นาฬิกาเครื่อง client
+--
+-- แยกสองกรณี: แถวที่ยังแชร์อยู่หมดอายุใน 15 นาที ส่วนแถวที่กดหยุดแชร์แล้ว
+-- เก็บไว้ 24 ชั่วโมงและคง updated_at ไว้ที่เวลาของตำแหน่งจริงครั้งสุดท้าย
+-- ไม่งั้นคนที่เพิ่งกดหยุดจะดูเหมือน "อัปเดตเมื่อสักครู่"
 CREATE OR REPLACE FUNCTION set_updated_and_expires()
 RETURNS TRIGGER AS $$
 BEGIN
-  NEW.updated_at = NOW();
-  NEW.expires_at = NOW() + INTERVAL '15 minutes';
+  IF NEW.is_sharing THEN
+    NEW.updated_at = NOW();
+    NEW.expires_at = NOW() + INTERVAL '15 minutes';
+  ELSE
+    IF TG_OP = 'UPDATE' THEN
+      NEW.updated_at = OLD.updated_at;
+    ELSE
+      NEW.updated_at = NOW();
+    END IF;
+    NEW.expires_at = NOW() + INTERVAL '24 hours';
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

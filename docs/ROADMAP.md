@@ -102,6 +102,15 @@ PWA แชร์ตำแหน่งแบบเรียลไทม์สำ�
 - [x] เทสต์ RLS แบบสวมบทสองเครื่องคนละ identity ทดสอบกับ production จริงแล้ว
 - [x] `CLAUDE.md` บันทึกข้อจำกัดที่มองไม่เห็นจากโค้ด
 
+## Phase 13: Stop-sharing Retention — Done
+
+- [x] `is_sharing` + soft delete แทนการลบถาวรตอนกดหยุดแชร์
+- [x] trigger แยกสองกรณี — แชร์อยู่ 15 นาที, หยุดแล้วเก็บ 24 ชม.
+- [x] `updated_at` ไม่ขยับตอนหยุด ตำแหน่งจึงไม่ดูเหมือนเพิ่งอัปเดต
+- [x] จุดแดง + "(หยุดแชร์แล้ว)" ในรายชื่อและ marker
+- [x] โหมดผู้ดูแล `?admin=1` (เป็นสวิตช์แสดงผล ไม่ใช่การควบคุมสิทธิ์)
+- [x] ให้ผู้ใช้เลือก "หยุดและลบตำแหน่งทิ้ง" ได้ และบอกตรงๆ ว่าเก็บไว้ 24 ชม.
+
 ---
 
 ## Open Issues
@@ -109,9 +118,6 @@ PWA แชร์ตำแหน่งแบบเรียลไทม์สำ�
 - [#8 Import เส้นทางจากเครื่อง GPS (GPX/KML)](https://github.com/monthop-gmail/location-share/issues/8)
 - [#9 ดึงข้อมูลสาขาจาก API แสดงเป็น marker](https://github.com/monthop-gmail/location-share/issues/9)
 - [#10 Traccar GPS tracker integration](https://github.com/monthop-gmail/location-share/issues/10)
-- [#11 Location history for admin](https://github.com/monthop-gmail/location-share/issues/11)
-  — ต้องรื้อ `delete_expired_locations()` กับการลบตอน stop sharing ก่อน
-  ตอนนี้ทั้งสองทางลบข้อมูลถาวร
 - [#16 จำกัดการอ่านตามห้องด้วย `room_members`](https://github.com/monthop-gmail/location-share/issues/16)
   — ส่วนที่เหลือจาก #3 ดู [SECURITY.md](SECURITY.md)
 
@@ -125,3 +131,6 @@ PWA แชร์ตำแหน่งแบบเรียลไทม์สำ�
 - [#5 Room switch refresh](https://github.com/monthop-gmail/location-share/issues/5)
 - [#6 Cleanup dead code + console spam](https://github.com/monthop-gmail/location-share/issues/6)
 - [#7 Destination Pin](https://github.com/monthop-gmail/location-share/issues/7)
+- [#11 Location history for admin](https://github.com/monthop-gmail/location-share/issues/11)
+  (ทำเฉพาะ "เก็บตำแหน่งสุดท้าย" ตาม Technical Changes — เส้นทางย้อนหลังจริง
+  ต้องแยกตารางใหม่ ยังไม่ได้ทำ)

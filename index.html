@@ -195,6 +195,10 @@
     .status-dot.offline {
       background: #bbb;
     }
+    .status-dot.stopped {
+      background: #F44336;
+      box-shadow: 0 0 5px rgba(244, 67, 54, 0.5);
+    }
     .friend-item.offline {
       opacity: 0.55;
     }
@@ -204,6 +208,28 @@
       color: #999;
       font-weight: 300;
     }
+    .friend-item.stopped {
+      opacity: 0.75;
+    }
+    .friend-item.stopped .friend-name::after {
+      content: ' (หยุดแชร์แล้ว)';
+      font-size: 12px;
+      color: #F44336;
+      font-weight: 300;
+    }
+
+    /* Shown only in admin view, so it is obvious why extra people are listed */
+    .admin-banner {
+      display: none;
+      background: rgba(244, 67, 54, 0.1);
+      color: #C62828;
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    body.admin-view .admin-banner { display: block; }
 
     button#drawBtn {
       background: #f8f9fa;
@@ -364,10 +390,20 @@
       margin-bottom: 8px;
       background: white;
     }
+    .dialog-message {
+      font-size: 14px;
+      color: #666;
+      line-height: 1.5;
+      margin-bottom: 16px;
+      text-align: center;
+    }
     .dialog-actions {
       display: flex;
       gap: 10px;
       margin-top: 4px;
+    }
+    .dialog-actions.stacked {
+      flex-direction: column;
     }
     .dialog-actions button {
       flex: 1;
@@ -409,6 +445,10 @@
   <div id="map"></div>
   <div class="controls">
     <div id="groupBadge" class="group-badge" style="display:none;"></div>
+    <div class="admin-banner">
+      👁 โหมดผู้ดูแล — เห็นคนที่กดหยุดแชร์ไปแล้วด้วย (จุดแดง)
+      <a href="?admin=0" style="color:#C62828;">ปิดโหมดนี้</a>
+    </div>
     <div class="input-group">
       <input type="text" id="displayName" placeholder="ใส่ชื่อเล่นของคุณที่นี่...">
     </div>
@@ -494,6 +534,44 @@
       const la = safeCoord(lat), ln = safeCoord(lng);
       if (la === null || ln === null) return null;
       return `https://www.google.com/maps/dir/?api=1&destination=${la},${ln}`;
+    }
+
+    // Choice dialog. confirm() only offers yes/no, and stopping now has two
+    // meaningfully different outcomes the user has to be able to tell apart.
+    // Resolves to the chosen value, or null if cancelled.
+    function askChoice({ title, message, options }) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+        overlay.innerHTML = `
+          <div class="dialog-card">
+            <div class="dialog-title">${escapeHtml(title)}</div>
+            <div class="dialog-message">${escapeHtml(message)}</div>
+            <div class="dialog-actions stacked">
+              ${options.map((o, i) => `
+                <button type="button" class="dialog-ok" data-index="${i}"
+                        style="background:${o.accent};">${escapeHtml(o.label)}</button>
+              `).join('')}
+              <button type="button" class="dialog-cancel">ยกเลิก</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(overlay);
+
+        function close(value) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(value);
+        }
+        function onKey(e) { if (e.key === 'Escape') close(null); }
+
+        overlay.querySelectorAll('.dialog-ok').forEach(btn => {
+          btn.addEventListener('click', () => close(options[Number(btn.dataset.index)].value));
+        });
+        overlay.querySelector('.dialog-cancel').addEventListener('click', () => close(null));
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
+        document.addEventListener('keydown', onKey);
+      });
     }
 
     // Name-entry dialog with an optional icon picker.
@@ -653,6 +731,8 @@
       return hash || 'main';
     }
 
+    if (isAdminView()) document.body.classList.add('admin-view');
+
     // Show group badge + update title
     function updateRoomTitle() {
       const room = getRoom();
@@ -797,7 +877,11 @@
             room: getRoom(),
             lat: latitude,
             lng: longitude,
-            display_name: displayName
+            display_name: displayName,
+            // Must be explicit: on conflict this is an UPDATE, and columns left
+            // out keep their old value — so someone who stopped and started
+            // again would stay flagged as stopped forever.
+            is_sharing: true
           }, { onConflict: 'user_id,room' }));
 
         if (error) console.error('Upsert error:', error);
@@ -814,30 +898,45 @@
     }
 
     async function stopSharing() {
-      if (!confirm('ต้องการหยุดแชร์ตำแหน่งใช่ไหม?')) return;
+      // Say plainly that the last position survives. Stopping used to delete
+      // everything, so anyone who learned that behaviour would otherwise assume
+      // it still holds — and pressing stop is exactly when someone means to
+      // become invisible.
+      const choice = await askChoice({
+        title: 'หยุดแชร์ตำแหน่ง',
+        message: 'ตำแหน่งสุดท้ายของคุณจะยังอยู่ให้คนในห้องดูได้อีก 24 ชั่วโมง '
+               + 'ถ้าไม่ต้องการให้เหลือไว้ เลือกลบทิ้งได้',
+        options: [
+          { label: 'หยุดแชร์', value: 'stop', accent: 'linear-gradient(135deg,#FF9800,#F57C00)' },
+          { label: 'หยุดและลบตำแหน่งทิ้ง', value: 'delete', accent: 'linear-gradient(135deg,#FF5252,#D32F2F)' }
+        ]
+      });
+      if (!choice) return;
 
       if (watchId) {
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
       }
-      
+
       isSharing = false;
       updateShareButtonUI();
 
-      const { error } = await withSession(() => supabaseClient
-        .from('locations')
-        .delete()
-        .eq('user_id', userId)
-        .eq('room', getRoom()));
+      const room = getRoom();
+      const { error } = await withSession(() => choice === 'delete'
+        ? supabaseClient.from('locations').delete()
+            .eq('user_id', userId).eq('room', room)
+        : supabaseClient.from('locations').update({ is_sharing: false })
+            .eq('user_id', userId).eq('room', room));
 
       if (error) {
         console.error('Stop share error:', error);
-      } else {
-        if (myMarker) {
-          myMarker.remove();
-          myMarker = null;
-        }
-        // alert('เลิกแชร์ตำแหน่งเรียบร้อยแล้ว'); // No need to alert, UI change is enough
+        alert('หยุดแชร์ไม่สำเร็จ กรุณาลองใหม่');
+        return;
+      }
+
+      if (myMarker) {
+        myMarker.remove();
+        myMarker = null;
       }
     }
 
@@ -957,12 +1056,14 @@
       // friendData is already filtered by shouldShow() in updateMarker
       let filtered = [...friendData];
 
-      // Filter by name or keyword (online/offline)
+      // Filter by name or keyword (online/offline/stopped)
       const filterText = (document.getElementById('filterName')?.value || '').trim().toLowerCase();
       if (filterText === 'online') {
-        filtered = filtered.filter(f => isOnline(f));
+        filtered = filtered.filter(f => isOnline(f) && !hasStopped(f));
       } else if (filterText === 'offline') {
-        filtered = filtered.filter(f => !isOnline(f));
+        filtered = filtered.filter(f => !isOnline(f) && !hasStopped(f));
+      } else if (filterText === 'stopped' || filterText === 'หยุด') {
+        filtered = filtered.filter(f => hasStopped(f));
       } else if (filterText) {
         filtered = filtered.filter(f => {
           const name = (f.display_name || f.user_id).toLowerCase();
@@ -976,8 +1077,12 @@
         return;
       }
 
-      // Sort: online first, then by updated_at (newest first)
+      // Sort: still sharing first, then online, then by updated_at (newest first).
+      // People who stopped sink to the bottom — they are reference, not the point.
       filtered.sort((a, b) => {
+        const aLive = hasStopped(a) ? 0 : 1;
+        const bLive = hasStopped(b) ? 0 : 1;
+        if (bLive !== aLive) return bLive - aLive;
         const aOnline = isOnline(a) ? 1 : 0;
         const bOnline = isOnline(b) ? 1 : 0;
         if (bOnline !== aOnline) return bOnline - aOnline;
@@ -1001,8 +1106,11 @@
         else if (diffHours > 0 && diffHours <= 24) timeText = `${diffHours} ชม.ที่แล้ว`;
         else if (diffDays > 0) timeText = `${diffDays} วันที่แล้ว`;
 
+        const stopped = hasStopped(friend);
         const item = document.createElement('div');
-        item.className = online ? 'friend-item' : 'friend-item offline';
+        item.className = stopped ? 'friend-item stopped'
+                       : online  ? 'friend-item'
+                                 : 'friend-item offline';
 
         // Navigation button inside friend item
         const navBtn = document.createElement('a');
@@ -1030,7 +1138,9 @@
         item.appendChild(navBtn);
 
         const statusDot = document.createElement('div');
-        statusDot.className = online ? 'status-dot online' : 'status-dot offline';
+        statusDot.className = stopped ? 'status-dot stopped'
+                            : online  ? 'status-dot online'
+                                      : 'status-dot offline';
         item.appendChild(statusDot);
 
         listContainer.appendChild(item);
@@ -1047,11 +1157,35 @@
     // 00:00. Anything older than this is stale enough to hide.
     const RECENT_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 hours
 
+    // Someone who pressed stop keeps their last position for as long as the
+    // database keeps the row — 24h, set by the trigger in 005_stop_sharing.sql.
+    const STOPPED_WINDOW_MS = 24 * 60 * 60 * 1000;
+
     function isRecent(loc) {
       const t = new Date(loc.updated_at).getTime();
       if (!Number.isFinite(t)) return false;
-      return (Date.now() - t) < RECENT_WINDOW_MS;
+      const window = loc.is_sharing === false ? STOPPED_WINDOW_MS : RECENT_WINDOW_MS;
+      return (Date.now() - t) < window;
     }
+
+    function hasStopped(loc) {
+      return loc.is_sharing === false;
+    }
+
+    // --- Admin view ---
+    // This is a display toggle, NOT access control. SELECT is open to anon (it
+    // has to be, or Realtime goes silent — see #16), so anyone holding the key
+    // can read stopped positions straight from the API whatever this says.
+    // Do not treat it as a privacy boundary.
+    function isAdminView() {
+      return localStorage.getItem('admin_view') === '1';
+    }
+
+    (function applyAdminFromUrl() {
+      const flag = new URLSearchParams(window.location.search).get('admin');
+      if (flag === '1') localStorage.setItem('admin_view', '1');
+      else if (flag === '0') localStorage.removeItem('admin_view');
+    })();
 
     // Geographic boundary: Thailand + nearby (lat 0-25, lng 90-115)
     function isInBounds(loc) {
@@ -1065,6 +1199,7 @@
       if (!loc) return false;
       if (loc.user_id === userId) return false;  // that's me — myMarker covers it
       if (loc.room !== getRoom()) return false;  // another room's business
+      if (hasStopped(loc) && !isAdminView()) return false;
       if (!isRecent(loc)) return false;
       if (!isInBounds(loc)) return false;
       return true;
@@ -1084,10 +1219,13 @@
       if (!deferList) updateFriendList();
 
       const online = isOnline(loc);
+      const stopped = hasStopped(loc);
       const displayName = escapeHtml(loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`);
-      const statusBadge = online
-        ? '<span style="color:#4CAF50;font-size:12px;">● online</span>'
-        : '<span style="color:#999;font-size:12px;">● offline</span>';
+      const statusBadge = stopped
+        ? '<span style="color:#F44336;font-size:12px;">● หยุดแชร์แล้ว</span>'
+        : online
+          ? '<span style="color:#4CAF50;font-size:12px;">● online</span>'
+          : '<span style="color:#999;font-size:12px;">● offline</span>';
       const popupContent = `
         <div style="text-align:center;">
           <b>${displayName}</b> ${statusBadge}<br>
@@ -1100,12 +1238,16 @@
         </div>
       `;
 
+      // Stopped sits between online and offline: dimmer than live, but still
+      // legible — it is the whole reason an admin turned this view on.
+      const markerOpacity = stopped ? 0.6 : online ? 1.0 : 0.4;
+
       if (otherMarkers[loc.user_id]) {
         otherMarkers[loc.user_id].setLatLng([loc.lat, loc.lng])
           .setPopupContent(popupContent)
-          .setOpacity(online ? 1.0 : 0.4);
+          .setOpacity(markerOpacity);
       } else {
-        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng], { opacity: online ? 1.0 : 0.4 })
+        otherMarkers[loc.user_id] = L.marker([loc.lat, loc.lng], { opacity: markerOpacity })
           .addTo(map)
           .bindPopup(popupContent);
       }

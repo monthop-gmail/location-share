@@ -74,11 +74,14 @@ const L = new Proxy({}, {
   },
 });
 
-// Supabase stub: thenable query builder, resolves to an empty result set
+// Supabase stub: thenable query builder, resolves to an empty result set.
+// Records every call so assertions can inspect what the app actually sends —
+// a payload that silently omits a column is otherwise invisible from here.
+const dbCalls = [];
 const query = new Proxy({}, {
   get: (t, p) => {
     if (p === 'then') return (fn) => { fn({ data: [], error: null }); return Promise.resolve(); };
-    return () => query;
+    return (...args) => { dbCalls.push({ method: String(p), args }); return query; };
   },
 });
 const channel = { on: () => channel, subscribe: () => channel };
@@ -117,17 +120,18 @@ const sandbox = {
   clearInterval: () => {},
   setTimeout: () => 1,
   Promise, Date, Math, Number, Set, Map, Array, Object, JSON, String, RegExp, Error, isNaN,
-  URL,
+  URL, URLSearchParams,
   alert: (m) => { throw new Error('unexpected alert(): ' + m); },
   confirm: () => true,
   localStorage: {
     getItem: (k) => (k in store ? store[k] : null),
     setItem: (k, v) => { store[k] = String(v); },
+    removeItem: (k) => { delete store[k]; },
   },
   navigator: { geolocation: { watchPosition: () => 1, clearWatch() {} }, serviceWorker: undefined },
 };
 sandbox.window = {
-  location: { hash: '#ทริปเชียงใหม่' },
+  location: { hash: '#ทริปเชียงใหม่', search: '' },
   addEventListener(t, fn) { (listeners[t] ||= []).push(fn); },
 };
 sandbox.globalThis = sandbox;
@@ -176,7 +180,41 @@ const checks = [
   ['shouldShow accepts same room', () => sandbox.shouldShow({
     user_id: 'someone', room: 'ทริปเชียงใหม่', lat: 13.75, lng: 100.5, updated_at: new Date().toISOString(),
   }) === true],
+
+  // Stopped rows exist in the same table as live ones and differ only by a
+  // flag, so the filter has to key off is_sharing rather than staleness.
+  ['hasStopped reads the flag', () => sandbox.hasStopped({ is_sharing: false }) === true],
+  ['a row with no flag counts as sharing', () => sandbox.hasStopped({}) === false],
+  ['stopped rows are hidden by default', () => sandbox.shouldShow(stoppedRow()) === false],
+  ['admin view reveals stopped rows', () => {
+    sandbox.localStorage.setItem('admin_view', '1');
+    const shown = sandbox.shouldShow(stoppedRow());
+    sandbox.localStorage.removeItem('admin_view');
+    return shown === true;
+  }],
+  ['admin view does not resurrect other rooms', () => {
+    sandbox.localStorage.setItem('admin_view', '1');
+    const shown = sandbox.shouldShow({ ...stoppedRow(), room: 'อื่น' });
+    sandbox.localStorage.removeItem('admin_view');
+    return shown === false;
+  }],
+  ['stopped rows survive past the 12h live window', () => sandbox.isRecent({
+    is_sharing: false, updated_at: new Date(Date.now() - 20 * 3600e3).toISOString(),
+  }) === true],
+  ['stopped rows drop after the 24h retention', () => sandbox.isRecent({
+    is_sharing: false, updated_at: new Date(Date.now() - 25 * 3600e3).toISOString(),
+  }) === false],
+  ['a live row still drops after 12h', () => sandbox.isRecent({
+    is_sharing: true, updated_at: new Date(Date.now() - 13 * 3600e3).toISOString(),
+  }) === false],
 ];
+
+function stoppedRow() {
+  return {
+    user_id: 'someone', room: 'ทริปเชียงใหม่', lat: 13.75, lng: 100.5,
+    updated_at: new Date().toISOString(), is_sharing: false,
+  };
+}
 
 if (!failed) {
   for (const [name, fn] of checks) {
@@ -231,6 +269,18 @@ async function authChecks() {
   });
   t('a stale session is retried once and succeeds', attempts === 2 && !res.error);
   t('the retry signed out first', authCalls.signOut === signOutsBefore + 1);
+
+  // The upsert is an UPDATE on conflict, so any column left out keeps its old
+  // value. Omitting is_sharing would leave anyone who stopped and started again
+  // flagged as stopped for good — and nothing else in the app would complain.
+  dbCalls.length = 0;
+  await sandbox.updateLocation({ coords: { latitude: 13.75, longitude: 100.5 } }, 'ทดสอบ');
+  const upsert = dbCalls.find(c => c.method === 'upsert');
+  t('sharing writes a row at all', !!upsert);
+  t('sharing sets is_sharing back to true', !!upsert && upsert.args[0].is_sharing === true);
+  t('sharing carries the room', !!upsert && upsert.args[0].room === 'ทริปเชียงใหม่');
+  t('upsert still conflicts on (user_id, room)',
+    !!upsert && upsert.args[1] && upsert.args[1].onConflict === 'user_id,room');
 
   return results;
 }

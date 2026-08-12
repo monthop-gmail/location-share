@@ -110,12 +110,20 @@ has shipped a Temporal Dead Zone crash before (commit `179df7b`). `tests/smoke.j
 resolves its Supabase stub *synchronously*, which is stricter than reality, so
 using state before its declaration fails in CI rather than on a phone.
 
-### Time windows
+### Time windows and stop-sharing
 
 Friends are filtered by a rolling 12-hour window (`isRecent`), never by calendar
 date — an earlier `isToday()` made everyone sharing at 23:59 vanish at 00:00.
-Online/offline is a separate 15-minute threshold. Rows expire server-side after
-15 minutes and pg_cron deletes them every 5 minutes.
+Online/offline is a separate 15-minute threshold.
+
+Pressing stop is a soft delete (`is_sharing = false`), not a delete. The trigger
+in `005_stop_sharing.sql` is where both retentions live: 15 minutes while
+sharing, 24 hours once stopped, and `updated_at` deliberately frozen on stop so
+the row does not read as just-updated. pg_cron deletes on `expires_at` alone, so
+changing retention means changing the trigger, not the cron.
+
+`?admin=1` reveals stopped rows. It is a display toggle in localStorage, **not**
+access control — SELECT is open to anon, so the data is readable regardless.
 
 ## Gotchas
 
