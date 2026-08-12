@@ -84,20 +84,43 @@ PWA แชร์ตำแหน่งแบบเรียลไทม์สำ�
 - [x] Service worker แบบ network-first (ไม่ cache-first เพื่อไม่ให้ LINE Browser ค้างเวอร์ชันเก่า)
 - [x] `_headers` แยก cache ของ static asset ออกจาก app shell
 
+## Phase 11: Deploy & Migration Automation — Done
+
+- [x] `migrations/*.sql` รันอัตโนมัติก่อน deploy ทุก push (`migrate` → `deploy` ผูก `needs:`)
+- [x] ทุกไฟล์ใน `migrations/` ต้องรันซ้ำได้ — CI รันสองรอบพิสูจน์
+- [x] `tests/migrations.sh` ซ้อม migration กับ schema แบบที่ production เป็นจริง
+- [x] `db-preflight` ตรวจ connection string ตั้งแต่ตอน PR ไม่ใช่ตอน deploy ล้ม
+- [x] แก้ `_headers` ที่ Cloudflare ต่อค่ากฎทับกันเอง (icon ไม่เคยถูก cache จริง)
+
+## Phase 12: Row Ownership — Done
+
+- [x] Anonymous Sign-ins — ทุกเครื่องมี `auth.uid()` โดยผู้ใช้ไม่ต้องสมัคร
+- [x] `withSession()` re-auth เงียบๆ แล้วลองใหม่เมื่อ session หมดอายุ
+- [x] stamp `owner` ทุกแถวจาก JWT ไม่ใช่จาก client
+- [x] `locations` แก้/ลบได้เฉพาะเจ้าของ — anon key เปล่าเขียนหรือลบไม่ได้อีก
+- [x] `routes`/`pins` เปิด DELETE ให้คนในห้องโดยตั้งใจ (วางแผนทริปร่วมกัน)
+- [x] เทสต์ RLS แบบสวมบทสองเครื่องคนละ identity ทดสอบกับ production จริงแล้ว
+- [x] `CLAUDE.md` บันทึกข้อจำกัดที่มองไม่เห็นจากโค้ด
+
 ---
 
 ## Open Issues
 
-- [#3 Stricter RLS Policies](https://github.com/monthop-gmail/location-share/issues/3)
-  — ปิดฝั่งเขียนแล้วด้วย anonymous sign-ins + [`004_row_ownership.sql`](../migrations/004_row_ownership.sql)
-  ส่วนการอ่านข้ามห้องยังต้องรอ `room_members` ดู [SECURITY.md](SECURITY.md)
-- [#8 Import GPS (SinoTrack CSV/GPX)](https://github.com/monthop-gmail/location-share/issues/8)
-- [#9 Branch markers from API](https://github.com/monthop-gmail/location-share/issues/9)
+- [#8 Import เส้นทางจากเครื่อง GPS (GPX/KML)](https://github.com/monthop-gmail/location-share/issues/8)
+- [#9 ดึงข้อมูลสาขาจาก API แสดงเป็น marker](https://github.com/monthop-gmail/location-share/issues/9)
+- [#10 Traccar GPS tracker integration](https://github.com/monthop-gmail/location-share/issues/10)
+- [#11 Location history for admin](https://github.com/monthop-gmail/location-share/issues/11)
+  — ต้องรื้อ `delete_expired_locations()` กับการลบตอน stop sharing ก่อน
+  ตอนนี้ทั้งสองทางลบข้อมูลถาวร
+- [#16 จำกัดการอ่านตามห้องด้วย `room_members`](https://github.com/monthop-gmail/location-share/issues/16)
+  — ส่วนที่เหลือจาก #3 ดู [SECURITY.md](SECURITY.md)
 
 ## Closed Issues
 
 - [#1 Route/Polyline Support](https://github.com/monthop-gmail/location-share/issues/1)
 - [#2 Manual Location Picker](https://github.com/monthop-gmail/location-share/issues/2) (ปิด — ใช้ GPS อย่างเดียว, Multi-Group ทำแล้ว)
+- [#3 Stricter RLS Policies](https://github.com/monthop-gmail/location-share/issues/3)
+  (ปิดฝั่งเขียนด้วย Phase 12 — ฝั่งอ่านแยกไป #16)
 - [#4 Schema: DELETE policy + display_name](https://github.com/monthop-gmail/location-share/issues/4)
 - [#5 Room switch refresh](https://github.com/monthop-gmail/location-share/issues/5)
 - [#6 Cleanup dead code + console spam](https://github.com/monthop-gmail/location-share/issues/6)
