@@ -445,14 +445,15 @@
     }
 
     // --- Group/Room from URL hash (supports Thai) ---
+    const MAX_ROOM_LEN = 64;
+
     function getRoom() {
       let hash = window.location.hash.replace('#', '').trim();
       try { hash = decodeURIComponent(hash); } catch(e) {}
+      // '@' used to be the user_id/room separator — keep it out of room names
+      // so old-format rows can never be confused with new ones.
+      hash = hash.replace(/@/g, '').trim().slice(0, MAX_ROOM_LEN);
       return hash || 'main';
-    }
-    function getRoomUserId(baseId) {
-      const room = getRoom();
-      return room === 'main' ? baseId : `${baseId}@${room}`;
     }
 
     // Show group badge + update title
@@ -475,8 +476,17 @@
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
+    // --- Map state ---
+    // Declared up here, before anything that touches them. An earlier version
+    // shipped a Temporal Dead Zone crash by declaring state below its first use;
+    // all mutable state lives in this block now so that cannot recur.
     let myMarker = null;
     let otherMarkers = {};
+    let friendData = [];
+    let realtimeChannel = null;
+    let refreshInterval = null;
+    let isSharing = false;
+    let watchId = null;
     let baseUserId = localStorage.getItem('user_id');
 
     // Auto-fit bounds on load
@@ -500,14 +510,8 @@
     } else {
     }
 
-    // Effective userId includes room
-    let userId = getRoomUserId(baseUserId);
-
-    // Auto-subscribe on load
-    subscribeToLocations();
-
-    let isSharing = false;
-    let watchId = null;
+    // The room now lives in its own column, so the id is stable across rooms.
+    const userId = baseUserId;
 
     function toggleShare() {
        if (isSharing) {
@@ -585,11 +589,12 @@
           .from('locations')
           .upsert({
             user_id: userId,
+            room: getRoom(),
             lat: latitude,
             lng: longitude,
             display_name: displayName
-          }, { onConflict: 'user_id' });
-          
+          }, { onConflict: 'user_id,room' });
+
         if (error) console.error('Upsert error:', error);
     }
     
@@ -613,7 +618,8 @@
       const { error } = await supabaseClient
         .from('locations')
         .delete()
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .eq('room', getRoom());
 
       if (error) {
         console.error('Stop share error:', error);
@@ -640,20 +646,35 @@
       updateFriendList();
     }
 
-    // Fetch and display locations (reusable)
+    // Fetch this room's locations and reconcile against what is on screen:
+    // anything missing from the payload has stopped sharing, so drop it.
+    // This is also the safety net for realtime DELETE events we never see.
     function fetchLocations(fit) {
-      supabaseClient.from('locations').select('*').then(({ data, error }) => {
+      const room = getRoom();
+      supabaseClient.from('locations').select('*').eq('room', room).then(({ data, error }) => {
         if (error) {
           console.error('Fetch error:', error);
-        } else if (data && data.length > 0) {
-          data.forEach(updateMarker);
-          if (fit) fitAllMarkers();
+          return;
         }
+        if (getRoom() !== room) return; // room changed while the request was in flight
+
+        const rows = (data || []).filter(shouldShow);
+        const present = new Set(rows.map(r => r.user_id));
+
+        Object.keys(otherMarkers).forEach(id => {
+          if (!present.has(id)) {
+            otherMarkers[id].remove();
+            delete otherMarkers[id];
+          }
+        });
+        friendData = friendData.filter(f => present.has(f.user_id));
+
+        // Render the list once for the whole batch, not once per friend.
+        rows.forEach(loc => updateMarker(loc, true));
+        updateFriendList();
+        if (fit) fitAllMarkers();
       });
     }
-
-    var realtimeChannel = null;
-    var refreshInterval = null;
 
     function subscribeToLocations() {
       if (!supabaseClient) return alert('Supabase client not initialized');
@@ -668,10 +689,9 @@
           .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
             if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
               updateMarker(payload.new);
-            } else if (payload.eventType === 'DELETE') {
-              clearOtherMarkers();
-              fetchLocations(false);
             }
+            // DELETE payloads carry only the primary key, so there is nothing
+            // useful to match on — fetchLocations() reconciles removals instead.
           })
           .subscribe();
       }
@@ -687,14 +707,17 @@
     // Handle room change
     window.addEventListener('hashchange', () => {
       updateRoomTitle();
-      // Update userId for new room
-      userId = getRoomUserId(baseUserId);
-      // Clear and refetch with new room filter
       clearOtherMarkers();
+      if (myMarker) {
+        myMarker.remove();
+        myMarker = null;
+      }
       fetchLocations(true);
+      clearRoutes();
+      fetchRoutes();
+      clearPins();
+      fetchPins();
     });
-
-    let friendData = []; // Store friend data for list
 
     function updateFriendList() {
       const listContainer = document.getElementById('friendList');
@@ -706,7 +729,7 @@
         return;
       }
 
-      // friendData already filtered by isToday() in updateMarker
+      // friendData is already filtered by shouldShow() in updateMarker
       let filtered = [...friendData];
 
       // Filter by name or keyword (online/offline)
@@ -723,7 +746,7 @@
       }
 
       if (filtered.length === 0) {
-        const msg = filterText ? 'ไม่พบชื่อที่ค้นหา' : 'ยังไม่มีเพื่อนแชร์ตำแหน่งวันนี้';
+        const msg = filterText ? 'ไม่พบชื่อที่ค้นหา' : 'ยังไม่มีเพื่อนแชร์ตำแหน่งขณะนี้';
         listContainer.innerHTML = `<div style="text-align:center; color:#999; padding:10px; font-size:14px;">${msg}</div>`;
         return;
       }
@@ -795,11 +818,14 @@
       return (Date.now() - new Date(loc.updated_at).getTime()) < ONLINE_THRESHOLD_MS;
     }
 
-    function isToday(loc) {
-      const opts = { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' };
-      const locDate = new Date(loc.updated_at).toLocaleDateString('en-CA', opts);
-      const nowDate = new Date().toLocaleDateString('en-CA', opts);
-      return locDate === nowDate;
+    // Rolling window, not a calendar day: sharing at 23:59 must not vanish at
+    // 00:00. Anything older than this is stale enough to hide.
+    const RECENT_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+    function isRecent(loc) {
+      const t = new Date(loc.updated_at).getTime();
+      if (!Number.isFinite(t)) return false;
+      return (Date.now() - t) < RECENT_WINDOW_MS;
     }
 
     // Geographic boundary: Thailand + nearby (lat 0-25, lng 90-115)
@@ -809,20 +835,19 @@
       return lat >= 0 && lat <= 25 && lng >= 90 && lng <= 115;
     }
 
-    function updateMarker(loc) {
-      if (loc.user_id === userId) return; // Don't show myself as "other"
-      if (!isToday(loc)) return; // Only show today's entries
-      if (!isInBounds(loc)) return; // Filter out locations outside region
+    // Is this row one we should put on the map at all?
+    function shouldShow(loc) {
+      if (!loc) return false;
+      if (loc.user_id === userId) return false;  // that's me — myMarker covers it
+      if (loc.room !== getRoom()) return false;  // another room's business
+      if (!isRecent(loc)) return false;
+      if (!isInBounds(loc)) return false;
+      return true;
+    }
 
-      // Filter by room — only show users in the same room
-      const room = getRoom();
-      if (room === 'main') {
-        // main room: only show user_ids without @
-        if (loc.user_id.includes('@')) return;
-      } else {
-        // named room: only show user_ids ending with @room
-        if (!loc.user_id.endsWith('@' + room)) return;
-      }
+    // deferList: caller is rendering a batch and will call updateFriendList() itself
+    function updateMarker(loc, deferList) {
+      if (!shouldShow(loc)) return;
 
       // Update or Add to friendData
       const existingIndex = friendData.findIndex(f => f.user_id === loc.user_id);
@@ -831,8 +856,7 @@
       } else {
         friendData.push(loc);
       }
-      // Re-render list
-      updateFriendList();
+      if (!deferList) updateFriendList();
 
       const online = isOnline(loc);
       const displayName = escapeHtml(loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`);
@@ -1046,14 +1070,6 @@
           }
         })
         .subscribe();
-    }
-
-    // Init routes
-    try {
-      fetchRoutes();
-      subscribeToRoutes();
-    } catch (e) {
-      console.error('Routes init error:', e);
     }
 
     // ===== Destination Pins =====
@@ -1281,7 +1297,22 @@
         .subscribe();
     }
 
-    // Init pins
+    // ===== Boot =====
+    // Everything starts here, at the very bottom, so no init path can run
+    // before the state it depends on has been declared.
+    try {
+      subscribeToLocations();
+    } catch (e) {
+      console.error('Locations init error:', e);
+    }
+
+    try {
+      fetchRoutes();
+      subscribeToRoutes();
+    } catch (e) {
+      console.error('Routes init error:', e);
+    }
+
     try {
       fetchPins();
       subscribeToPins();
@@ -1289,13 +1320,6 @@
       console.error('Pins init error:', e);
     }
 
-    // Update hashchange to include routes + pins
-    window.addEventListener('hashchange', () => {
-      clearRoutes();
-      fetchRoutes();
-      clearPins();
-      fetchPins();
-    });
   </script>
 </body>
 </html>
