@@ -86,24 +86,34 @@ SQL พร้อมรันอยู่ที่ [`migrate-rls-owner.sql`](migr
 
 **สิ่งที่ต้องแลก:**
 
-1. ต้องเปิด Anonymous Sign-ins ใน Dashboard ก่อน (Authentication → Providers)
-2. ต้อง deploy client ที่เรียก `auth.signInAnonymously()` **พร้อมกัน** กับการรัน SQL
-   ไม่งั้น client เดิมจะเขียนข้อมูลไม่ได้เลย
-3. ทุกเครื่องที่เปิดแอปจะสร้างแถวใน `auth.users` และไม่หายเอง ต้องตั้ง cron ล้าง
-4. ถ้าผู้ใช้ล้าง site data จะกลายเป็นคนละ identity — หมุดเก่าที่ตัวเองสร้างจะลบไม่ได้อีก
+1. ต้องเปิด Anonymous Sign-ins ใน Dashboard (Authentication → Providers)
+2. ทุกเครื่องที่เปิดแอปจะสร้างแถวใน `auth.users` และไม่หายเอง
+3. ถ้าผู้ใช้ล้าง site data จะกลายเป็นคนละ identity — หมุดเก่าที่ตัวเองสร้างจะลบไม่ได้อีก
    (จึงยังเปิด DELETE ของ routes/pins ให้คนในห้องไว้ตามเดิม)
 
-โค้ดฝั่ง client ที่ต้องเพิ่ม:
+### ทำเป็นสองขั้น ไม่ต้องกดพร้อมกัน
 
-```js
-// ต้องรอให้ session พร้อมก่อนยิง query แรก
-const { error: authError } = await supabaseClient.auth.signInAnonymously();
-if (authError) console.error('Anonymous sign-in failed:', authError);
-```
+เอกสารฉบับก่อนบอกว่าต้อง deploy client กับรัน SQL พร้อมกัน — ไม่จำเป็นครับ
+ทำเรียงกันได้และปลอดภัยกว่า เพราะ **ขั้นที่ 1 ปลอดภัยไม่ว่า policy จะรัดหรือยัง**
 
-> ยังไม่ได้ใส่ไว้ใน `index.html` เพราะถ้า deploy ออกไปตอนที่ยังไม่ได้เปิด
-> Anonymous Sign-ins ในโปรเจกต์ แอปจะพังทั้งตัว — เป็นการตัดสินใจที่ต้องทำพร้อมกัน
-> ทั้งฝั่ง Dashboard และฝั่ง deploy
+| ขั้น | ทำอะไร | ถ้าหยุดตรงนี้ |
+|---|---|---|
+| 0 | เปิด provider ใน Dashboard | ไม่มีผลกับใคร |
+| 1 | deploy client ที่ `signInAnonymously()` | policy ยังหลวม ทุกอย่างทำงานปกติ แต่ทุกเครื่องเริ่มมี identity |
+| 2 | รัน SQL รัดกุม policy | client มี session อยู่แล้ว → เขียนผ่านทันที |
+
+**ขั้น 1 ทำแล้ว** — `ensureSession()` ใน `index.html` ยิง `signInAnonymously()` ตอน boot
+โดยไม่ block การอ่าน (อ่านเป็น public อยู่แล้ว) ส่วนการเขียนทุกจุดผ่าน `withSession()`
+ซึ่งถ้าเจอ session หมดอายุหรือถูกลบ จะ re-auth เงียบๆ แล้วลองใหม่หนึ่งครั้ง
+ก่อนจะโยน error ให้ผู้ใช้เห็น
+
+ถ้า provider ยังไม่เปิด `ensureSession()` จะ log error แล้วปล่อยผ่าน แอปยังทำงานได้
+ตามปกติ — จึง deploy ขั้น 1 ไปก่อนได้โดยไม่ต้องรอ
+
+**ขั้น 2 ยังไม่ทำ** — SQL อยู่ที่ [`migrate-rls-owner.sql`](migrate-rls-owner.sql)
+
+> ระหว่างขั้น 1 กับขั้น 2 ใครที่เปิดแอปค้างไว้ตั้งแต่ก่อนขั้น 1 จะเขียนไม่ได้หลังขั้น 2
+> จนกว่าจะโหลดหน้าใหม่ ตำแหน่งหมดอายุใน 15 นาทีอยู่แล้ว จึงไม่มีข้อมูลไหนค้าง
 
 ---
 

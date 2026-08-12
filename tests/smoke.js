@@ -82,11 +82,28 @@ const query = new Proxy({}, {
   },
 });
 const channel = { on: () => channel, subscribe: () => channel };
+
+// Anonymous auth stub. authCalls lets the checks below assert that the app
+// reuses an existing session instead of minting a user on every page load.
+const authCalls = { getSession: 0, signInAnonymously: 0, signOut: 0 };
+let storedSession = null;
+
+const auth = {
+  getSession: async () => { authCalls.getSession++; return { data: { session: storedSession } }; },
+  signInAnonymously: async () => {
+    authCalls.signInAnonymously++;
+    storedSession = { user: { id: '00000000-0000-4000-8000-000000000001', is_anonymous: true } };
+    return { data: { session: storedSession }, error: null };
+  },
+  signOut: async () => { authCalls.signOut++; storedSession = null; return { error: null }; },
+};
+
 const supabase = {
   createClient: () => ({
     from: () => query,
     channel: () => channel,
     removeChannel: () => {},
+    auth,
   }),
 };
 
@@ -170,11 +187,68 @@ if (!failed) {
   }
 }
 
-if (missing.length) {
-  console.log('❌ getElementById on ids not present in markup: ' + [...new Set(missing)].join(', '));
-  failed = true;
-} else {
-  console.log('✅ every getElementById target exists in the markup');
+// Auth behaviour is async, so it runs after the synchronous checks above.
+async function authChecks() {
+  const results = [];
+  const t = (name, ok) => results.push([name, ok]);
+
+  // Boot deliberately does not await its sign-in, and top-level `let` bindings
+  // are not properties of the vm global, so the promise cannot be reached from
+  // out here. Drain the microtask queue instead — the auth stubs resolve
+  // immediately, so one macrotask boundary is enough to settle the whole chain.
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  await settle();
+  await settle();
+
+  // Exactly one: a second sign-in per load would mint a second anonymous user
+  // in auth.users every time anyone opens the app.
+  t('boot signed in anonymously exactly once', authCalls.signInAnonymously === 1);
+
+  const before = authCalls.signInAnonymously;
+  await sandbox.ensureSession();
+  t('an existing session is reused, not replaced', authCalls.signInAnonymously === before);
+
+  t('requireSession passes once signed in', await sandbox.requireSession() === true);
+
+  // RLS rejections arrive as ordinary error objects; they must be recognised
+  // so the retry path fires instead of the user seeing a Postgres error.
+  t('RLS rejection counts as an auth error',
+    sandbox.isAuthError({ code: '42501', message: 'new row violates row-level security policy' }) === true);
+  t('expired JWT counts as an auth error',
+    sandbox.isAuthError({ message: 'JWT expired' }) === true);
+  t('a constraint violation does not',
+    sandbox.isAuthError({ code: '23514', message: 'violates check constraint' }) === false);
+  t('no error is not an auth error', sandbox.isAuthError(null) === false);
+
+  // A stale session must cost one silent re-auth and a retry, not a visible failure.
+  const signOutsBefore = authCalls.signOut;
+  let attempts = 0;
+  const res = await sandbox.withSession(async () => {
+    attempts++;
+    return attempts === 1
+      ? { error: { code: '42501', message: 'row-level security' } }
+      : { error: null, data: [] };
+  });
+  t('a stale session is retried once and succeeds', attempts === 2 && !res.error);
+  t('the retry signed out first', authCalls.signOut === signOutsBefore + 1);
+
+  return results;
 }
 
-process.exit(failed ? 1 : 0);
+(async () => {
+  if (!failed) {
+    for (const [name, ok] of await authChecks()) {
+      console.log((ok ? '  ✅ ' : '  ❌ ') + name);
+      if (!ok) failed = true;
+    }
+  }
+
+  if (missing.length) {
+    console.log('❌ getElementById on ids not present in markup: ' + [...new Set(missing)].join(', '));
+    failed = true;
+  } else {
+    console.log('✅ every getElementById target exists in the markup');
+  }
+
+  process.exit(failed ? 1 : 0);
+})();
