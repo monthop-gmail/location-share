@@ -576,13 +576,18 @@
           return;
         }
 
-        if (!myMarker) {
-           map.setView([latitude, longitude], 15);
+        const popupContent = `<b>${escapeHtml(displayName)}</b> (คุณ)<br>กำลังแชร์...`;
+
+        if (myMarker) {
+          // Move the existing marker rather than rebuilding it. Recreating it on
+          // every GPS tick made the map flicker and forced the popup back open
+          // over and over while driving.
+          myMarker.setLatLng([latitude, longitude]).setPopupContent(popupContent);
+        } else {
+          map.setView([latitude, longitude], 15);
+          myMarker = L.marker([latitude, longitude]).addTo(map)
+            .bindPopup(popupContent).openPopup();
         }
-        
-        if (myMarker) myMarker.remove();
-        myMarker = L.marker([latitude, longitude]).addTo(map)
-          .bindPopup(`<b>${escapeHtml(displayName)}</b> (คุณ)<br>กำลังแชร์...`).openPopup();
 
         // Send to Supabase
         const { error } = await supabaseClient
@@ -600,7 +605,11 @@
     
     // Auto-update function for watchPosition
     function updateLocationFromWatch(position) {
-       const displayName = document.getElementById('displayName').value;
+       // Fall back to the saved name so clearing the box mid-trip doesn't
+       // start publishing an empty display_name.
+       const displayName = document.getElementById('displayName').value.trim()
+         || localStorage.getItem('display_name')
+         || '';
        updateLocation(position, displayName);
     }
 
