@@ -1,9 +1,24 @@
+# Cloudflare Pages applies every matching rule in order, so the catch-all goes
+# first and the more specific rules below override it.
+
+# Default: never serve a stale app shell. LINE Browser holds onto old copies
+# aggressively and users end up running last week's JavaScript.
 /*
   Cache-Control: no-cache, no-store, must-revalidate
   Pragma: no-cache
   Expires: 0
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
 
-/index.html
+# The service worker controls what everyone else sees — it must never be stale.
+/sw.js
   Cache-Control: no-cache, no-store, must-revalidate
-  Pragma: no-cache
-  Expires: 0
+
+# Icons never change without changing name, so let the browser keep them.
+/icons/*
+  Cache-Control: public, max-age=31536000, immutable
+  Pragma: cache
+
+/manifest.json
+  Cache-Control: public, max-age=86400
+  Pragma: cache

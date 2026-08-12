@@ -8,6 +8,14 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>แชร์ตำแหน่งเพื่อน</title>
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#00BFA5" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="แชร์ตำแหน่ง" />
   <style id="groupBadgeStyle">
     .group-badge {
       display: inline-block;
@@ -323,6 +331,60 @@
       border-radius: 4px;
     }
 
+    /* Shared dialog (replaces prompt(), which LINE Browser may refuse) */
+    .dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .dialog-card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 320px;
+    }
+    .dialog-title {
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .dialog-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 16px;
+      margin-bottom: 8px;
+      background: white;
+    }
+    .dialog-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+    }
+    .dialog-actions button {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 15px;
+    }
+    .dialog-cancel {
+      border: 1px solid #ddd;
+      background: #f8f9fa;
+      color: #555;
+    }
+    .dialog-ok {
+      border: none;
+      color: white;
+    }
+
     .icon-picker {
       display: flex;
       gap: 8px;
@@ -393,10 +455,111 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
   <script>
+    // Register the service worker. Failure here is never fatal — the app works
+    // fine without it, LINE Browser in particular may refuse registration.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .catch(err => console.warn('SW registration skipped:', err));
+      });
+    }
+
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+    }
+
+    // --- Allowlists (single source of truth) ---
+    const PIN_ICONS = ['📍', '🏁', '☕', '⛽', '🅿️', '🏨'];
+    const ROUTE_COLORS = ['#3388ff', '#FF5252', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4'];
+
+    // Rows can be INSERTed by anyone holding the anon key, so never trust
+    // icon/color/lat/lng straight from the DB — allowlist them at render time.
+    function safeIcon(icon) {
+      return PIN_ICONS.includes(icon) ? icon : '📍';
+    }
+
+    function safeColor(color) {
+      return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#3388ff';
+    }
+
+    function safeCoord(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    // Returns a Google Maps directions URL, or null if the coords are junk.
+    function navUrl(lat, lng) {
+      const la = safeCoord(lat), ln = safeCoord(lng);
+      if (la === null || ln === null) return null;
+      return `https://www.google.com/maps/dir/?api=1&destination=${la},${ln}`;
+    }
+
+    // Name-entry dialog with an optional icon picker.
+    // Used instead of prompt(), which some in-app browsers (LINE included)
+    // silently refuse to display. Resolves to {name, icon} or null if cancelled.
+    function askForName({ title, placeholder, defaultValue = '', icons = null, accent = '#00BFA5' }) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        const iconRow = icons ? `
+          <div style="font-size:14px;color:#666;margin-bottom:4px;text-align:center;">เลือกไอคอน</div>
+          <div class="icon-picker">
+            ${icons.map(ic => `<span class="icon-option" data-icon="${ic}">${ic}</span>`).join('')}
+          </div>` : '';
+
+        overlay.innerHTML = `
+          <div class="dialog-card">
+            <div class="dialog-title">${escapeHtml(title)}</div>
+            <input type="text" class="dialog-input" placeholder="${escapeHtml(placeholder)}">
+            ${iconRow}
+            <div class="dialog-actions">
+              <button type="button" class="dialog-cancel">ยกเลิก</button>
+              <button type="button" class="dialog-ok" style="background:${accent};">บันทึก</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const input = overlay.querySelector('.dialog-input');
+        input.value = defaultValue;
+
+        const iconOptions = overlay.querySelectorAll('.icon-option');
+        if (iconOptions.length) {
+          iconOptions[0].classList.add('selected');
+          iconOptions.forEach(el => el.addEventListener('click', () => {
+            iconOptions.forEach(o => o.classList.remove('selected'));
+            el.classList.add('selected');
+          }));
+        }
+
+        function close(result) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(result);
+        }
+
+        function submit() {
+          const name = input.value.trim();
+          if (!name) { input.focus(); return; }   // empty name is not a save
+          const selected = overlay.querySelector('.icon-option.selected');
+          close({ name, icon: selected ? selected.dataset.icon : null });
+        }
+
+        function onKey(e) {
+          if (e.key === 'Escape') close(null);
+          else if (e.key === 'Enter' && document.activeElement === input) submit();
+        }
+
+        overlay.querySelector('.dialog-ok').addEventListener('click', submit);
+        overlay.querySelector('.dialog-cancel').addEventListener('click', () => close(null));
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(null); });
+        document.addEventListener('keydown', onKey);
+
+        input.focus();
+      });
     }
 
     // Configuration - Replace with your own Supabase project details
@@ -419,14 +582,15 @@
     }
 
     // --- Group/Room from URL hash (supports Thai) ---
+    const MAX_ROOM_LEN = 64;
+
     function getRoom() {
       let hash = window.location.hash.replace('#', '').trim();
       try { hash = decodeURIComponent(hash); } catch(e) {}
+      // '@' used to be the user_id/room separator — keep it out of room names
+      // so old-format rows can never be confused with new ones.
+      hash = hash.replace(/@/g, '').trim().slice(0, MAX_ROOM_LEN);
       return hash || 'main';
-    }
-    function getRoomUserId(baseId) {
-      const room = getRoom();
-      return room === 'main' ? baseId : `${baseId}@${room}`;
     }
 
     // Show group badge + update title
@@ -449,8 +613,17 @@
       attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
+    // --- Map state ---
+    // Declared up here, before anything that touches them. An earlier version
+    // shipped a Temporal Dead Zone crash by declaring state below its first use;
+    // all mutable state lives in this block now so that cannot recur.
     let myMarker = null;
     let otherMarkers = {};
+    let friendData = [];
+    let realtimeChannel = null;
+    let refreshInterval = null;
+    let isSharing = false;
+    let watchId = null;
     let baseUserId = localStorage.getItem('user_id');
 
     // Auto-fit bounds on load
@@ -469,19 +642,12 @@
     }
 
     if (!baseUserId) {
-      baseUserId = 'user_' + Math.random().toString(36).substr(2, 9);
+      baseUserId = 'user_' + Math.random().toString(36).slice(2, 11);
       localStorage.setItem('user_id', baseUserId);
-    } else {
     }
 
-    // Effective userId includes room
-    let userId = getRoomUserId(baseUserId);
-
-    // Auto-subscribe on load
-    subscribeToLocations();
-
-    let isSharing = false;
-    let watchId = null;
+    // The room now lives in its own column, so the id is stable across rooms.
+    const userId = baseUserId;
 
     function toggleShare() {
        if (isSharing) {
@@ -546,30 +712,40 @@
           return;
         }
 
-        if (!myMarker) {
-           map.setView([latitude, longitude], 15);
+        const popupContent = `<b>${escapeHtml(displayName)}</b> (คุณ)<br>กำลังแชร์...`;
+
+        if (myMarker) {
+          // Move the existing marker rather than rebuilding it. Recreating it on
+          // every GPS tick made the map flicker and forced the popup back open
+          // over and over while driving.
+          myMarker.setLatLng([latitude, longitude]).setPopupContent(popupContent);
+        } else {
+          map.setView([latitude, longitude], 15);
+          myMarker = L.marker([latitude, longitude]).addTo(map)
+            .bindPopup(popupContent).openPopup();
         }
-        
-        if (myMarker) myMarker.remove();
-        myMarker = L.marker([latitude, longitude]).addTo(map)
-          .bindPopup(`<b>${escapeHtml(displayName)}</b> (คุณ)<br>กำลังแชร์...`).openPopup();
 
         // Send to Supabase
         const { error } = await supabaseClient
           .from('locations')
           .upsert({
             user_id: userId,
+            room: getRoom(),
             lat: latitude,
             lng: longitude,
             display_name: displayName
-          }, { onConflict: 'user_id' });
-          
+          }, { onConflict: 'user_id,room' });
+
         if (error) console.error('Upsert error:', error);
     }
     
     // Auto-update function for watchPosition
     function updateLocationFromWatch(position) {
-       const displayName = document.getElementById('displayName').value;
+       // Fall back to the saved name so clearing the box mid-trip doesn't
+       // start publishing an empty display_name.
+       const displayName = document.getElementById('displayName').value.trim()
+         || localStorage.getItem('display_name')
+         || '';
        updateLocation(position, displayName);
     }
 
@@ -587,7 +763,8 @@
       const { error } = await supabaseClient
         .from('locations')
         .delete()
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .eq('room', getRoom());
 
       if (error) {
         console.error('Stop share error:', error);
@@ -600,10 +777,6 @@
       }
     }
 
-    // Remove old listeners as we use onclick in HTML now for cleaner toggle logic
-    // document.getElementById('shareBtn').addEventListener('click', shareLocation); 
-    // document.getElementById('stopBtn').addEventListener('click', stopSharing);
-
     // Clear all other markers and friend list
     function clearOtherMarkers() {
       Object.keys(otherMarkers).forEach(key => {
@@ -614,20 +787,35 @@
       updateFriendList();
     }
 
-    // Fetch and display locations (reusable)
+    // Fetch this room's locations and reconcile against what is on screen:
+    // anything missing from the payload has stopped sharing, so drop it.
+    // This is also the safety net for realtime DELETE events we never see.
     function fetchLocations(fit) {
-      supabaseClient.from('locations').select('*').then(({ data, error }) => {
+      const room = getRoom();
+      supabaseClient.from('locations').select('*').eq('room', room).then(({ data, error }) => {
         if (error) {
           console.error('Fetch error:', error);
-        } else if (data && data.length > 0) {
-          data.forEach(updateMarker);
-          if (fit) fitAllMarkers();
+          return;
         }
+        if (getRoom() !== room) return; // room changed while the request was in flight
+
+        const rows = (data || []).filter(shouldShow);
+        const present = new Set(rows.map(r => r.user_id));
+
+        Object.keys(otherMarkers).forEach(id => {
+          if (!present.has(id)) {
+            otherMarkers[id].remove();
+            delete otherMarkers[id];
+          }
+        });
+        friendData = friendData.filter(f => present.has(f.user_id));
+
+        // Render the list once for the whole batch, not once per friend.
+        rows.forEach(loc => updateMarker(loc, true));
+        updateFriendList();
+        if (fit) fitAllMarkers();
       });
     }
-
-    var realtimeChannel = null;
-    var refreshInterval = null;
 
     function subscribeToLocations() {
       if (!supabaseClient) return alert('Supabase client not initialized');
@@ -642,33 +830,55 @@
           .on('postgres_changes', { event: '*', schema: 'public', table: 'locations' }, payload => {
             if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
               updateMarker(payload.new);
-            } else if (payload.eventType === 'DELETE') {
-              clearOtherMarkers();
-              fetchLocations(false);
             }
+            // DELETE payloads carry only the primary key, so there is nothing
+            // useful to match on — fetchLocations() reconciles removals instead.
           })
           .subscribe();
       }
 
-      // Auto-refresh every 10 seconds (only once)
-      if (!refreshInterval) {
-        refreshInterval = setInterval(() => {
-          fetchLocations(false);
-        }, 10000);
-      }
+      startPolling();
     }
 
-    // Handle room change
-    window.addEventListener('hashchange', () => {
-      updateRoomTitle();
-      // Update userId for new room
-      userId = getRoomUserId(baseUserId);
-      // Clear and refetch with new room filter
-      clearOtherMarkers();
-      fetchLocations(true);
+    const POLL_INTERVAL_MS = 10000;
+
+    function startPolling() {
+      if (refreshInterval) return;
+      refreshInterval = setInterval(() => fetchLocations(false), POLL_INTERVAL_MS);
+    }
+
+    function stopPolling() {
+      if (!refreshInterval) return;
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+
+    // No point polling a screen nobody is looking at — this runs on phones that
+    // are already busy holding a GPS lock.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        fetchLocations(false); // catch up on whatever we missed
+        startPolling();
+      }
     });
 
-    let friendData = []; // Store friend data for list
+    // Handle room change — friends, routes and pins are all room-scoped,
+    // so wipe the map and refetch everything for the new room.
+    window.addEventListener('hashchange', () => {
+      updateRoomTitle();
+      clearOtherMarkers();
+      if (myMarker) {
+        myMarker.remove();
+        myMarker = null;
+      }
+      fetchLocations(true);
+      clearRoutes();
+      fetchRoutes();
+      clearPins();
+      fetchPins();
+    });
 
     function updateFriendList() {
       const listContainer = document.getElementById('friendList');
@@ -680,7 +890,7 @@
         return;
       }
 
-      // friendData already filtered by isToday() in updateMarker
+      // friendData is already filtered by shouldShow() in updateMarker
       let filtered = [...friendData];
 
       // Filter by name or keyword (online/offline)
@@ -697,7 +907,7 @@
       }
 
       if (filtered.length === 0) {
-        const msg = filterText ? 'ไม่พบชื่อที่ค้นหา' : 'ยังไม่มีเพื่อนแชร์ตำแหน่งวันนี้';
+        const msg = filterText ? 'ไม่พบชื่อที่ค้นหา' : 'ยังไม่มีเพื่อนแชร์ตำแหน่งขณะนี้';
         listContainer.innerHTML = `<div style="text-align:center; color:#999; padding:10px; font-size:14px;">${msg}</div>`;
         return;
       }
@@ -732,8 +942,9 @@
 
         // Navigation button inside friend item
         const navBtn = document.createElement('a');
-        navBtn.href = `https://www.google.com/maps/dir/?api=1&destination=${friend.lat},${friend.lng}`;
+        navBtn.href = navUrl(friend.lat, friend.lng) || '#';
         navBtn.target = '_blank';
+        navBtn.rel = 'noopener noreferrer';
         navBtn.innerHTML = '🚗';
         navBtn.style.cssText = 'padding: 8px; font-size: 20px; text-decoration: none;';
         navBtn.onclick = (e) => e.stopPropagation();
@@ -768,32 +979,36 @@
       return (Date.now() - new Date(loc.updated_at).getTime()) < ONLINE_THRESHOLD_MS;
     }
 
-    function isToday(loc) {
-      const opts = { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' };
-      const locDate = new Date(loc.updated_at).toLocaleDateString('en-CA', opts);
-      const nowDate = new Date().toLocaleDateString('en-CA', opts);
-      return locDate === nowDate;
+    // Rolling window, not a calendar day: sharing at 23:59 must not vanish at
+    // 00:00. Anything older than this is stale enough to hide.
+    const RECENT_WINDOW_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+    function isRecent(loc) {
+      const t = new Date(loc.updated_at).getTime();
+      if (!Number.isFinite(t)) return false;
+      return (Date.now() - t) < RECENT_WINDOW_MS;
     }
 
     // Geographic boundary: Thailand + nearby (lat 0-25, lng 90-115)
     function isInBounds(loc) {
-      return loc.lat >= 0 && loc.lat <= 25 && loc.lng >= 90 && loc.lng <= 115;
+      const lat = safeCoord(loc.lat), lng = safeCoord(loc.lng);
+      if (lat === null || lng === null) return false;
+      return lat >= 0 && lat <= 25 && lng >= 90 && lng <= 115;
     }
 
-    function updateMarker(loc) {
-      if (loc.user_id === userId) return; // Don't show myself as "other"
-      if (!isToday(loc)) return; // Only show today's entries
-      if (!isInBounds(loc)) return; // Filter out locations outside region
+    // Is this row one we should put on the map at all?
+    function shouldShow(loc) {
+      if (!loc) return false;
+      if (loc.user_id === userId) return false;  // that's me — myMarker covers it
+      if (loc.room !== getRoom()) return false;  // another room's business
+      if (!isRecent(loc)) return false;
+      if (!isInBounds(loc)) return false;
+      return true;
+    }
 
-      // Filter by room — only show users in the same room
-      const room = getRoom();
-      if (room === 'main') {
-        // main room: only show user_ids without @
-        if (loc.user_id.includes('@')) return;
-      } else {
-        // named room: only show user_ids ending with @room
-        if (!loc.user_id.endsWith('@' + room)) return;
-      }
+    // deferList: caller is rendering a batch and will call updateFriendList() itself
+    function updateMarker(loc, deferList) {
+      if (!shouldShow(loc)) return;
 
       // Update or Add to friendData
       const existingIndex = friendData.findIndex(f => f.user_id === loc.user_id);
@@ -802,8 +1017,7 @@
       } else {
         friendData.push(loc);
       }
-      // Re-render list
-      updateFriendList();
+      if (!deferList) updateFriendList();
 
       const online = isOnline(loc);
       const displayName = escapeHtml(loc.display_name || `User: ${loc.user_id.substring(0, 5)}...`);
@@ -815,7 +1029,7 @@
           <b>${displayName}</b> ${statusBadge}<br>
           <span style="font-size:12px;color:#666;">อัปเดต: ${new Date(loc.updated_at).toLocaleTimeString('th-TH')}</span>
           <br>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank"
+          <a href="${navUrl(loc.lat, loc.lng)}" target="_blank" rel="noopener noreferrer"
              style="display:inline-block; margin-top:8px; padding:6px 12px; background:#4285F4; color:white; text-decoration:none; border-radius:4px; font-size:14px;">
             🚗 นำทางไปหา
           </a>
@@ -839,7 +1053,6 @@
     let drawHandler = null;
     let routeChannel = null;
     let routeData = [];
-    const ROUTE_COLORS = ['#3388ff', '#FF5252', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4'];
 
     function toggleDrawMode() {
       if (isDrawing) {
@@ -889,14 +1102,25 @@
         return;
       }
 
-      const name = prompt('ตั้งชื่อเส้นทาง:', `เส้นทาง ${routeData.length + 1}`) || `เส้นทาง ${routeData.length + 1}`;
+      const result = await askForName({
+        title: 'ตั้งชื่อเส้นทาง',
+        placeholder: 'ชื่อเส้นทาง...',
+        defaultValue: `เส้นทาง ${routeData.length + 1}`,
+        accent: '#F57C00'
+      });
+
+      if (!result) {
+        stopDrawMode();
+        return;
+      }
+
       const color = ROUTE_COLORS[routeData.length % ROUTE_COLORS.length];
 
       const { error } = await supabaseClient
         .from('routes')
         .insert({
           room: getRoom(),
-          name: name,
+          name: result.name.slice(0, 80),
           coordinates: latlngs,
           color: color,
           created_by: userId
@@ -917,11 +1141,18 @@
 
     function renderRoute(route) {
       if (drawnRoutes[route.id]) {
+        // delete too, not just remove — the early return below would otherwise
+        // leave a detached layer in the map that the route list still links to
         drawnRoutes[route.id].remove();
+        delete drawnRoutes[route.id];
       }
-      const coords = route.coordinates.map(c => [c[0], c[1]]);
+      // coordinates is untrusted JSONB — drop anything that isn't a [lat,lng] pair
+      const coords = (Array.isArray(route.coordinates) ? route.coordinates : [])
+        .map(c => Array.isArray(c) ? [safeCoord(c[0]), safeCoord(c[1])] : null)
+        .filter(c => c && c[0] !== null && c[1] !== null);
+      if (coords.length < 2) return;
       const polyline = L.polyline(coords, {
-        color: route.color || '#3388ff',
+        color: safeColor(route.color),
         weight: 4,
         opacity: 0.8
       }).addTo(map);
@@ -980,7 +1211,7 @@
         };
         item.innerHTML = `
           <div class="route-item-info">
-            <div class="route-color" style="background:${route.color || '#3388ff'}"></div>
+            <div class="route-color" style="background:${safeColor(route.color)}"></div>
             <span class="route-name">${escapeHtml(route.name || 'เส้นทาง')}</span>
           </div>
         `;
@@ -1013,20 +1244,11 @@
         .subscribe();
     }
 
-    // Init routes
-    try {
-      fetchRoutes();
-      subscribeToRoutes();
-    } catch (e) {
-      console.error('Routes init error:', e);
-    }
-
     // ===== Destination Pins =====
-    var drawnPins = {};
-    var isPinning = false;
-    var pinChannel = null;
-    var pinData = [];
-    const PIN_ICONS = ['📍', '🏁', '☕', '⛽', '🅿️', '🏨'];
+    let drawnPins = {};
+    let isPinning = false;
+    let pinChannel = null;
+    let pinData = [];
 
     function togglePinMode() {
       if (isPinning) {
@@ -1057,49 +1279,14 @@
     async function onPinClick(e) {
       const latlng = e.latlng;
 
-      // Icon picker dialog
-      const iconPickerHtml = PIN_ICONS.map((ic, i) =>
-        `<span class="icon-option" data-icon="${ic}" onclick="document.querySelectorAll('.icon-option').forEach(el=>el.classList.remove('selected'));this.classList.add('selected')">${ic}</span>`
-      ).join('');
-
-      const dialog = document.createElement('div');
-      dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
-      dialog.innerHTML = `
-        <div style="background:white;border-radius:16px;padding:24px;width:90%;max-width:320px;font-family:'Kanit',sans-serif;">
-          <div style="font-size:16px;font-weight:500;margin-bottom:12px;text-align:center;">ปักหมุดจุดหมาย</div>
-          <input type="text" id="pinNameInput" placeholder="ชื่อจุดหมาย..." style="width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:16px;font-family:'Kanit',sans-serif;margin-bottom:8px;">
-          <div style="font-size:14px;color:#666;margin-bottom:4px;text-align:center;">เลือกไอคอน</div>
-          <div class="icon-picker">${iconPickerHtml}</div>
-          <div style="display:flex;gap:10px;">
-            <button onclick="this.closest('div[style*=fixed]').dataset.result='cancel';this.closest('div[style*=fixed]').remove()" style="flex:1;padding:12px;border-radius:10px;border:1px solid #ddd;background:#f8f9fa;font-family:'Kanit',sans-serif;font-size:15px;cursor:pointer;">ยกเลิก</button>
-            <button onclick="this.closest('div[style*=fixed]').dataset.result='ok';this.closest('div[style*=fixed]').dispatchEvent(new Event('confirm'))" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#9C27B0,#7B1FA2);color:white;font-family:'Kanit',sans-serif;font-size:15px;cursor:pointer;">บันทึก</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(dialog);
-
-      // Select first icon by default
-      dialog.querySelector('.icon-option').classList.add('selected');
-      dialog.querySelector('#pinNameInput').focus();
-
-      // Wait for user action
-      const result = await new Promise(resolve => {
-        dialog.addEventListener('confirm', () => {
-          const name = dialog.querySelector('#pinNameInput').value.trim();
-          const selectedIcon = dialog.querySelector('.icon-option.selected');
-          const icon = selectedIcon ? selectedIcon.dataset.icon : '📍';
-          dialog.remove();
-          resolve({ name, icon });
-        });
-        dialog.addEventListener('click', (ev) => {
-          if (ev.target === dialog) {
-            dialog.remove();
-            resolve(null);
-          }
-        });
+      const result = await askForName({
+        title: 'ปักหมุดจุดหมาย',
+        placeholder: 'ชื่อจุดหมาย...',
+        icons: PIN_ICONS,
+        accent: '#9C27B0'
       });
 
-      if (!result || !result.name) {
+      if (!result) {
         stopPinMode();
         return;
       }
@@ -1108,10 +1295,10 @@
         .from('pins')
         .insert({
           room: getRoom(),
-          name: result.name,
+          name: result.name.slice(0, 80),
           lat: latlng.lat,
           lng: latlng.lng,
-          icon: result.icon,
+          icon: safeIcon(result.icon),
           created_by: userId
         });
 
@@ -1126,21 +1313,27 @@
     function renderPin(pin) {
       if (drawnPins[pin.id]) {
         drawnPins[pin.id].remove();
+        delete drawnPins[pin.id];
       }
+      const lat = safeCoord(pin.lat), lng = safeCoord(pin.lng);
+      if (lat === null || lng === null) return;
+
+      const pinIcon = safeIcon(pin.icon);
       const icon = L.divIcon({
-        html: `<div style="font-size:28px;text-align:center;line-height:1;">${pin.icon || '📍'}</div>`,
+        html: `<div style="font-size:28px;text-align:center;line-height:1;">${pinIcon}</div>`,
         className: '',
         iconSize: [32, 32],
         iconAnchor: [16, 28],
         popupAnchor: [0, -28]
       });
-      const marker = L.marker([pin.lat, pin.lng], { icon: icon }).addTo(map);
+      const marker = L.marker([lat, lng], { icon: icon }).addTo(map);
+      const url = navUrl(lat, lng);
       marker.bindPopup(`
         <div style="text-align:center;font-family:'Kanit',sans-serif;">
-          <div style="font-size:24px;">${pin.icon || '📍'}</div>
+          <div style="font-size:24px;">${pinIcon}</div>
           <b>${escapeHtml(pin.name)}</b>
           <br>
-          <a href="https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}" target="_blank"
+          <a href="${url}" target="_blank" rel="noopener noreferrer"
              style="display:inline-block;margin-top:8px;padding:6px 12px;background:#9C27B0;color:white;text-decoration:none;border-radius:4px;font-size:14px;">
             🚗 นำทางไปจุดหมาย
           </a>
@@ -1200,13 +1393,14 @@
         };
         item.innerHTML = `
           <div class="pin-item-info">
-            <span class="pin-icon">${pin.icon || '📍'}</span>
+            <span class="pin-icon">${safeIcon(pin.icon)}</span>
             <span class="pin-name">${escapeHtml(pin.name)}</span>
           </div>
         `;
         const navBtn = document.createElement('a');
-        navBtn.href = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+        navBtn.href = navUrl(pin.lat, pin.lng) || '#';
         navBtn.target = '_blank';
+        navBtn.rel = 'noopener noreferrer';
         navBtn.className = 'pin-nav';
         navBtn.innerHTML = '🚗';
         navBtn.onclick = (e) => e.stopPropagation();
@@ -1240,7 +1434,22 @@
         .subscribe();
     }
 
-    // Init pins
+    // ===== Boot =====
+    // Everything starts here, at the very bottom, so no init path can run
+    // before the state it depends on has been declared.
+    try {
+      subscribeToLocations();
+    } catch (e) {
+      console.error('Locations init error:', e);
+    }
+
+    try {
+      fetchRoutes();
+      subscribeToRoutes();
+    } catch (e) {
+      console.error('Routes init error:', e);
+    }
+
     try {
       fetchPins();
       subscribeToPins();
@@ -1248,13 +1457,6 @@
       console.error('Pins init error:', e);
     }
 
-    // Update hashchange to include routes + pins
-    window.addEventListener('hashchange', () => {
-      clearRoutes();
-      fetchRoutes();
-      clearPins();
-      fetchPins();
-    });
   </script>
 </body>
 </html>

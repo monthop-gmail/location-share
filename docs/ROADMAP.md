@@ -63,11 +63,34 @@ PWA แชร์ตำแหน่งแบบเรียลไทม์สำ�
 - [x] Pin list: zoom, นำทาง Google Maps, ลบ
 - [x] แยกหมุดตาม room
 
+## Phase 9: Hardening — Done
+
+- [x] ปิด stored XSS ที่ `pins.icon` / `routes.color` (allowlist ตอน render)
+- [x] CHECK constraint ฝั่ง DB — พิกัด, ความยาวชื่อ, รูปแบบสี, โครงสร้าง coordinates
+- [x] ยก `room` ขึ้นเป็นคอลัมน์จริง กรองที่ DB แทนการดึงทุกห้องมากรองเอง
+- [x] ตั้ง pg_cron ลบตำแหน่งหมดอายุ (ฟังก์ชันมีมานานแต่ไม่เคยถูกเรียก)
+- [x] Reconcile marker ทุกรอบ poll — เพื่อนที่หยุดแชร์ไม่ค้างบนแผนที่อีก
+- [x] เลิก rebuild รายชื่อเพื่อนทีละคน (เดิม O(N²) ทุก 10 วินาที)
+- [x] เลิกสร้าง marker ตัวเองใหม่ทุก GPS tick — popup ไม่เด้งซ้ำระหว่างขับรถ
+- [x] เปลี่ยนการกรองจาก "วันนี้" เป็นหน้าต่าง 12 ชม. — เพื่อนไม่หายตอนเที่ยงคืน
+- [x] หยุด poll เมื่อสลับแอปออก (ประหยัดแบตขณะจับ GPS)
+- [x] ย้าย state ทั้งหมดขึ้นบนสุด + boot ที่ล่างสุด ปิดโอกาสเกิด TDZ ซ้ำ
+- [x] แทน `prompt()` ด้วย dialog ในหน้า (in-app browser บางตัวไม่แสดง `prompt()`)
+- [x] Smoke test + CI ที่รันจริง (เดิมเป็น `echo "CI passed!"`)
+
+## Phase 10: PWA — Done
+
+- [x] `manifest.json` + icon 192/512 + maskable + apple-touch-icon
+- [x] Service worker แบบ network-first (ไม่ cache-first เพื่อไม่ให้ LINE Browser ค้างเวอร์ชันเก่า)
+- [x] `_headers` แยก cache ของ static asset ออกจาก app shell
+
 ---
 
 ## Open Issues
 
 - [#3 Stricter RLS Policies](https://github.com/monthop-gmail/location-share/issues/3)
+  — SQL พร้อมรันอยู่ที่ [migrate-rls-owner.sql](migrate-rls-owner.sql) แล้ว
+  รอตัดสินใจเรื่องเปิด Anonymous Sign-ins ดู [SECURITY.md](SECURITY.md)
 - [#8 Import GPS (SinoTrack CSV/GPX)](https://github.com/monthop-gmail/location-share/issues/8)
 - [#9 Branch markers from API](https://github.com/monthop-gmail/location-share/issues/9)
 

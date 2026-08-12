@@ -11,18 +11,125 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Check PR has linked issue
+        if: github.event_name == 'pull_request'
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            PR_NUMBER=$(echo $GITHUB_REF | sed "s|refs/pull/\([0-9]*\)/merge|\1|")
-            LINKED_ISSUE=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER --jq ".body" | grep -oE "#[0-9]+" | head -1)
-            if [ -z "$LINKED_ISSUE" ]; then
-              echo "❌ PR must link to an issue (e.g., closes #123)"
-              exit 1
-            fi
-            echo "✅ Linked issue found: $LINKED_ISSUE"
+          LINKED_ISSUE=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} --jq ".body" | grep -oE "#[0-9]+" | head -1)
+          if [ -z "$LINKED_ISSUE" ]; then
+            echo "❌ PR must link to an issue (e.g., closes #123)"
+            exit 1
           fi
+          echo "✅ Linked issue found: $LINKED_ISSUE"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Hello world
-        run: echo "CI passed!"
+
+      - name: Validate JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('✅ manifest.json is valid')"
+
+      - name: Check service worker syntax
+        run: node --check sw.js && echo "✅ sw.js parses"
+
+      - name: Smoke test
+        run: node tests/smoke.js
+
+  # A wrong SUPABASE_DB_URL only shows up when deploy.yml tries to use it, which
+  # is after the merge. Catch it on the PR instead. Never prints the password.
+  db-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Verify the connection string reaches a migratable database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "❌ ไม่ได้ตั้ง secret SUPABASE_DB_URL — ดู docs/MIGRATE.md"
+            exit 1
+          fi
+
+          case "$SUPABASE_DB_URL" in
+            postgresql://*|postgres://*) ;;
+            *)
+              echo "❌ ต้องเป็น connection string ขึ้นต้น postgresql://"
+              echo "   ไม่ใช่ https://<ref>.supabase.co ซึ่งเป็น REST API คนละอันกัน"
+              exit 1 ;;
+          esac
+
+          # host/port/user บอกปัญหาได้เกือบทุกกรณี และไม่ใช่ความลับ — ตัดรหัสผ่านทิ้ง
+          echo "→ $(printf '%s' "$SUPABASE_DB_URL" | sed -E 's#(//[^:]+:)[^@]+(@)#\1********\2#')"
+
+          # หน้า Connect ของ Supabase มีสตริงหลายแบบ สองแบบนี้หยิบผิดกันบ่อย
+          # แล้ว error ดิบของ psql ไม่ได้บอกว่าต้องแก้อะไร
+          case "$SUPABASE_DB_URL" in
+            *pgbouncer=true*)
+              echo "❌ นี่คือสตริงสำหรับ Prisma — psql ไม่รู้จัก ?pgbouncer=true"
+              echo "   ลบ '?pgbouncer=true' ท้ายสตริงออก แล้วเปลี่ยนพอร์ตเป็น 5432"
+              exit 1 ;;
+          esac
+          case "$SUPABASE_DB_URL" in
+            *:6543/*)
+              echo "❌ พอร์ต 6543 คือ transaction pooler ซึ่งรัน DDL ของ migration ไม่ได้"
+              echo "   เปลี่ยนเป็น 5432 (session pooler) host กับ user เหมือนเดิม"
+              exit 1 ;;
+          esac
+          case "$SUPABASE_DB_URL" in
+            *db.*.supabase.co*)
+              echo "❌ Direct connection เป็น IPv6 อย่างเดียว GitHub runner ต่อไม่ถึง"
+              echo "   ใช้ Session pooler (*.pooler.supabase.com:5432) แทน"
+              exit 1 ;;
+          esac
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc \
+            "select 'ต่อติด: ' || current_user || '@' || current_database()
+                    || ' | postgres ' || current_setting('server_version');"
+
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -tAc \
+            "select 'ตารางที่เจอ: ' || coalesce(string_agg(tablename, ', ' order by tablename), '(ไม่มี)')
+             from pg_tables where schemaname = 'public';"
+
+          # migrations เป็น DDL ล้วน — พิสูจน์ว่า connection นี้รัน DDL ได้จริง
+          # ทำใน transaction แล้ว rollback จึงไม่ทิ้งอะไรไว้ใน database
+          psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          CREATE TABLE _preflight_ddl_check (x int);
+          ROLLBACK;
+          SQL
+
+          echo "✅ connection string ใช้ได้ และรัน DDL ได้"
+
+  # deploy.yml applies migrations/ to the live database on every push to main,
+  # so rehearse them here first — against production's real starting schema.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Rehearse migrations
+        run: tests/migrations.sh
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
