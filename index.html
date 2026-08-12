@@ -8,6 +8,14 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>แชร์ตำแหน่งเพื่อน</title>
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#00BFA5" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="แชร์ตำแหน่ง" />
   <style id="groupBadgeStyle">
     .group-badge {
       display: inline-block;
@@ -393,6 +401,15 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
   <script>
+    // Register the service worker. Failure here is never fatal — the app works
+    // fine without it, LINE Browser in particular may refuse registration.
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .catch(err => console.warn('SW registration skipped:', err));
+      });
+    }
+
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str;
